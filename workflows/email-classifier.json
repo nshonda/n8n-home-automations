@@ -43,7 +43,7 @@
       "name": "Fetch Labels",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [460, 500],
+      "position": [340, 300],
       "credentials": {
         "gmailOAuth2": {
           "id": "GMAIL_CREDENTIAL_ID",
@@ -53,13 +53,23 @@
     },
     {
       "parameters": {
+        "jsCode": "// Cache the Gmail label map in static data and pass through email data\nconst labelsResponse = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\n// Build name -> ID map\nconst labelMap = {};\nfor (const l of (labelsResponse.labels || [])) {\n  labelMap[l.name] = l.id;\n}\nstaticData.labelMap = labelMap;\n\n// Pass through the original email from Gmail Trigger\nconst email = $('Gmail Trigger').first().json;\nreturn email;\n"
+      },
+      "id": "cache-labels",
+      "name": "Cache Labels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
         "jsCode": "// Extract and preprocess email content\nconst email = $input.first().json;\n\n// Get sender email\nconst fromHeader = email.payload?.headers?.find(h => h.name === 'From')?.value || email.from?.emailAddress || '';\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\n\n// Get subject\nconst subject = email.payload?.headers?.find(h => h.name === 'Subject')?.value || email.subject || '(no subject)';\n\n// Get body - handle multipart\nlet body = '';\nif (email.payload?.body?.data) {\n  body = Buffer.from(email.payload.body.data, 'base64').toString('utf-8');\n} else if (email.payload?.parts) {\n  const textPart = email.payload.parts.find(p => p.mimeType === 'text/plain');\n  if (textPart?.body?.data) {\n    body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');\n  }\n} else if (email.textPlain) {\n  body = email.textPlain;\n}\n\n// Strip HTML tags if present\nbody = body.replace(/<[^>]*>/g, ' ');\n\n// Remove quoted replies (lines starting with >)\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\n\n// Remove excessive whitespace\nbody = body.replace(/\\s+/g, ' ').trim();\n\n// Truncate to 1500 chars\nconst bodyPreview = body.substring(0, 1500);\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject,\n  bodyPreview,\n  snippet: email.snippet || '',\n  labelIds: email.labelIds || []\n};\n"
       },
       "id": "preprocess",
       "name": "Preprocess Email",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [600, 300]
     },
     {
       "parameters": {
@@ -170,7 +180,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build label names and resolve to Gmail label IDs\nconst email = $input.first().json;\n\n// Get label map from Fetch Labels node\nconst labelsData = $('Fetch Labels').first().json;\nconst gmailLabels = labelsData.labels || [];\nconst labelMap = {};\nfor (const l of gmailLabels) {\n  labelMap[l.name] = l.id;\n}\n\n// Determine which label names to apply\nconst labelNames = [];\n\n// Category label\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabelNames.push(categoryMap[email.category] || '#Other');\n\nif (email.priority === 'P1') {\n  labelNames.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labelNames.push('@Action/Review');\n}\n\nlabelNames.push('_System/Processed');\n\nif (email.confidence < 0.70) {\n  labelNames.push('_System/Review');\n}\n\n// Resolve names to IDs, skip any that don't exist\nconst labelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nreturn {\n  ...email,\n  labelsToAdd: labelIds,\n  labelNamesAdded: labelNames,\n  shouldArchive: email.archive && email.confidence >= 0.70\n};\n"
+        "jsCode": "// Build label names and resolve to Gmail label IDs\nconst email = $input.first().json;\n\n// Get label map from static data (cached by Cache Labels node)\nconst staticData = $getWorkflowStaticData('global');\nconst labelMap = staticData.labelMap || {};\n\n// Determine which label names to apply\nconst labelNames = [];\n\n// Category label\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabelNames.push(categoryMap[email.category] || '#Other');\n\nif (email.priority === 'P1') {\n  labelNames.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labelNames.push('@Action/Review');\n}\n\nlabelNames.push('_System/Processed');\n\nif (email.confidence < 0.70) {\n  labelNames.push('_System/Review');\n}\n\n// Resolve names to IDs, skip any that don't exist\nconst labelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nreturn {\n  ...email,\n  labelsToAdd: labelIds,\n  labelNamesAdded: labelNames,\n  shouldArchive: email.archive && email.confidence >= 0.70\n};\n"
       },
       "id": "build-labels",
       "name": "Build Labels",
@@ -251,7 +261,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Handle low confidence - resolve label IDs\nconst email = $input.first().json;\n\nconst labelsData = $('Fetch Labels').first().json;\nconst gmailLabels = labelsData.labels || [];\nconst labelMap = {};\nfor (const l of gmailLabels) {\n  labelMap[l.name] = l.id;\n}\n\nconst labelNames = ['_System/Processed', '_System/Review'];\nconst labelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nreturn {\n  ...email,\n  labelsToAdd: labelIds,\n  labelNamesAdded: labelNames,\n  shouldArchive: false\n};\n"
+        "jsCode": "// Handle low confidence - resolve label IDs\nconst email = $input.first().json;\n\nconst staticData = $getWorkflowStaticData('global');\nconst labelMap = staticData.labelMap || {};\n\nconst labelNames = ['_System/Processed', '_System/Review'];\nconst labelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nreturn {\n  ...email,\n  labelsToAdd: labelIds,\n  labelNamesAdded: labelNames,\n  shouldArchive: false\n};\n"
       },
       "id": "low-confidence",
       "name": "Low Confidence Handler",
@@ -265,12 +275,29 @@
       "main": [
         [
           {
-            "node": "Preprocess Email",
+            "node": "Fetch Labels",
             "type": "main",
             "index": 0
-          },
+          }
+        ]
+      ]
+    },
+    "Fetch Labels": {
+      "main": [
+        [
           {
-            "node": "Fetch Labels",
+            "node": "Cache Labels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Labels": {
+      "main": [
+        [
+          {
+            "node": "Preprocess Email",
             "type": "main",
             "index": 0
           }
