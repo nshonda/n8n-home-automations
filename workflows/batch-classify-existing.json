@@ -50,7 +50,7 @@
           "parameters": [
             {
               "name": "q",
-              "value": "in:inbox"
+              "value": "in:inbox -label:_System/Processed"
             },
             {
               "name": "maxResults",
