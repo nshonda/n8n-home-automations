@@ -1,0 +1,135 @@
+{
+  "name": "Setup Gmail Labels (Run Once)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Labels to create\nconst labels = [\n  '@Action',\n  '@Action/Reply',\n  '@Action/Review',\n  '@Action/Pay',\n  '@Action/Read',\n  '#Finance',\n  '#Finance/Banking',\n  '#Finance/Receipts',\n  '#Finance/Bills',\n  '#Finance/Investments',\n  '#Work',\n  '#Work/Projects',\n  '#Work/Meetings',\n  '#Personal',\n  '#Personal/Family',\n  '#Personal/Health',\n  '#Shopping',\n  '#Shopping/Orders',\n  '#Shopping/Shipping',\n  '#Shopping/Deals',\n  '#Travel',\n  '#Travel/Flights',\n  '#Travel/Hotels',\n  '#Travel/Reservations',\n  '#Notifications',\n  '#Newsletters',\n  '#Social',\n  '#Security',\n  '#Other',\n  '!Priority',\n  '!Priority/Urgent',\n  '!Priority/Important',\n  '~Reference',\n  '~Reference/Docs',\n  '~Reference/Receipts',\n  '_System',\n  '_System/Processed',\n  '_System/Review',\n  '_System/VIP',\n  '_Snooze',\n  '_Snooze/Tomorrow',\n  '_Snooze/NextWeek',\n  '_Snooze/NextMonth'\n];\n\nreturn labels.map(name => ({ json: { labelName: name } }));\n"
+      },
+      "id": "label-list",
+      "name": "Label List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "fetch-labels",
+      "name": "Fetch Existing Labels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get existing labels from the fetch\nconst existingLabelsData = $('Fetch Existing Labels').first().json;\nconst existingLabels = (existingLabelsData.labels || []).map(l => l.name);\n\n// Get labels to create\nconst items = $('Label List').all();\n\n// Filter to only labels that don't exist yet\nconst toCreate = items.filter(item => !existingLabels.includes(item.json.labelName));\n\nif (toCreate.length === 0) {\n  return [{ json: { message: 'All labels already exist!', created: 0 } }];\n}\n\nreturn toCreate;\n"
+      },
+      "id": "filter-existing",
+      "name": "Filter Existing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $json.labelName }}\",\n  \"labelListVisibility\": \"labelShow\",\n  \"messageListVisibility\": \"show\"\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 200
+            }
+          }
+        }
+      },
+      "id": "create-label",
+      "name": "Create Label",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst created = items.filter(i => i.json.id).length;\nconst failed = items.filter(i => !i.json.id).length;\nreturn [{ json: { message: `Created ${created} labels, ${failed} failed`, labels: items.map(i => i.json.name || i.json.labelName) } }];\n"
+      },
+      "id": "summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Label List", "type": "main", "index": 0 },
+          { "node": "Fetch Existing Labels", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Label List": {
+      "main": [
+        [
+          { "node": "Filter Existing", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Existing Labels": {
+      "main": [
+        [
+          { "node": "Filter Existing", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Filter Existing": {
+      "main": [
+        [
+          { "node": "Create Label", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Create Label": {
+      "main": [
+        [
+          { "node": "Summary", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "triggerCount": 0,
+  "pinData": {}
+}

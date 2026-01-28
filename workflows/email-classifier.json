@@ -13,7 +13,7 @@
           ]
         },
         "filters": {
-          "q": "in:inbox is:unread -label:_System/Processed"
+          "q": "in:inbox is:unread"
         },
         "options": {
           "maxResults": 10
@@ -33,7 +33,27 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract and preprocess email content\nconst email = $input.first().json;\n\n// Get sender email\nconst fromHeader = email.payload?.headers?.find(h => h.name === 'From')?.value || '';\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\n\n// Get subject\nconst subject = email.payload?.headers?.find(h => h.name === 'Subject')?.value || '(no subject)';\n\n// Get body - handle multipart\nlet body = '';\nif (email.payload?.body?.data) {\n  body = Buffer.from(email.payload.body.data, 'base64').toString('utf-8');\n} else if (email.payload?.parts) {\n  const textPart = email.payload.parts.find(p => p.mimeType === 'text/plain');\n  if (textPart?.body?.data) {\n    body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');\n  }\n}\n\n// Strip HTML tags if present\nbody = body.replace(/<[^>]*>/g, ' ');\n\n// Remove quoted replies (lines starting with >)\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\n\n// Remove excessive whitespace\nbody = body.replace(/\\s+/g, ' ').trim();\n\n// Truncate to 1500 chars\nconst bodyPreview = body.substring(0, 1500);\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject,\n  bodyPreview,\n  snippet: email.snippet || '',\n  labelIds: email.labelIds || []\n};\n"
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "fetch-labels",
+      "name": "Fetch Labels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and preprocess email content\nconst email = $input.first().json;\n\n// Get sender email\nconst fromHeader = email.payload?.headers?.find(h => h.name === 'From')?.value || email.from?.emailAddress || '';\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\n\n// Get subject\nconst subject = email.payload?.headers?.find(h => h.name === 'Subject')?.value || email.subject || '(no subject)';\n\n// Get body - handle multipart\nlet body = '';\nif (email.payload?.body?.data) {\n  body = Buffer.from(email.payload.body.data, 'base64').toString('utf-8');\n} else if (email.payload?.parts) {\n  const textPart = email.payload.parts.find(p => p.mimeType === 'text/plain');\n  if (textPart?.body?.data) {\n    body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');\n  }\n} else if (email.textPlain) {\n  body = email.textPlain;\n}\n\n// Strip HTML tags if present\nbody = body.replace(/<[^>]*>/g, ' ');\n\n// Remove quoted replies (lines starting with >)\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\n\n// Remove excessive whitespace\nbody = body.replace(/\\s+/g, ' ').trim();\n\n// Truncate to 1500 chars\nconst bodyPreview = body.substring(0, 1500);\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject,\n  bodyPreview,\n  snippet: email.snippet || '',\n  labelIds: email.labelIds || []\n};\n"
       },
       "id": "preprocess",
       "name": "Preprocess Email",
@@ -43,7 +63,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Check sender cache for known classifications\nconst email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\n// Initialize cache if needed\nif (!staticData.senderCache) {\n  staticData.senderCache = {};\n}\nif (!staticData.domainCache) {\n  staticData.domainCache = {};\n}\n\nconst cache = staticData.senderCache;\nconst domainCache = staticData.domainCache;\n\n// Check exact sender match first\nif (cache[email.senderEmail]) {\n  const cached = cache[email.senderEmail];\n  return {\n    ...email,\n    cached: true,\n    category: cached.category,\n    priority: cached.priority,\n    action_needed: cached.action_needed,\n    archive: cached.archive,\n    confidence: 0.95,\n    summary: `Cached classification for ${email.senderEmail}`\n  };\n}\n\n// Check domain pattern match\nif (domainCache[email.senderDomain]) {\n  const cached = domainCache[email.senderDomain];\n  return {\n    ...email,\n    cached: true,\n    category: cached.category,\n    priority: cached.priority,\n    action_needed: cached.action_needed,\n    archive: cached.archive,\n    confidence: 0.85,\n    summary: `Domain pattern match for ${email.senderDomain}`\n  };\n}\n\n// No cache hit - needs AI classification\nreturn {\n  ...email,\n  cached: false\n};\n"
+        "jsCode": "// Check sender cache for known classifications\nconst email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nif (!staticData.senderCache) staticData.senderCache = {};\nif (!staticData.domainCache) staticData.domainCache = {};\n\nconst cache = staticData.senderCache;\nconst domainCache = staticData.domainCache;\n\nif (cache[email.senderEmail]) {\n  const cached = cache[email.senderEmail];\n  return {\n    ...email,\n    cached: true,\n    category: cached.category,\n    priority: cached.priority,\n    action_needed: cached.action_needed,\n    archive: cached.archive,\n    confidence: 0.95,\n    summary: `Cached classification for ${email.senderEmail}`\n  };\n}\n\nif (domainCache[email.senderDomain]) {\n  const cached = domainCache[email.senderDomain];\n  return {\n    ...email,\n    cached: true,\n    category: cached.category,\n    priority: cached.priority,\n    action_needed: cached.action_needed,\n    archive: cached.archive,\n    confidence: 0.85,\n    summary: `Domain pattern match for ${email.senderDomain}`\n  };\n}\n\nreturn { ...email, cached: false };\n"
       },
       "id": "cache-check",
       "name": "Check Sender Cache",
@@ -102,7 +122,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse AI response and merge with email data\nconst email = $('Check Sender Cache').first().json;\nconst aiResponse = $input.first().json;\n\nlet classification;\ntry {\n  // Extract JSON from AI response\n  const content = aiResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    classification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  // Default classification on parse error\n  classification = {\n    category: 'Other',\n    priority: 'P2',\n    action_needed: false,\n    archive: false,\n    confidence: 0.5,\n    summary: 'Classification failed - needs review'\n  };\n}\n\nreturn {\n  ...email,\n  ...classification,\n  cached: false\n};\n"
+        "jsCode": "const email = $('Check Sender Cache').first().json;\nconst aiResponse = $input.first().json;\n\nlet classification;\ntry {\n  const content = aiResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    classification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  classification = {\n    category: 'Other',\n    priority: 'P2',\n    action_needed: false,\n    archive: false,\n    confidence: 0.5,\n    summary: 'Classification failed - needs review'\n  };\n}\n\nreturn { ...email, ...classification, cached: false };\n"
       },
       "id": "parse-ai",
       "name": "Parse AI Response",
@@ -112,7 +132,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Update sender cache based on classification\nconst email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\n// Only cache if confidence is high enough\nif (!email.cached && email.confidence >= 0.85) {\n  if (!staticData.senderCache) staticData.senderCache = {};\n  if (!staticData.senderCounts) staticData.senderCounts = {};\n  \n  // Track consecutive classifications\n  const key = email.senderEmail;\n  if (!staticData.senderCounts[key]) {\n    staticData.senderCounts[key] = { category: email.category, count: 1 };\n  } else if (staticData.senderCounts[key].category === email.category) {\n    staticData.senderCounts[key].count++;\n  } else {\n    staticData.senderCounts[key] = { category: email.category, count: 1 };\n  }\n  \n  // Add to cache after 3 consistent classifications\n  if (staticData.senderCounts[key].count >= 3) {\n    staticData.senderCache[key] = {\n      category: email.category,\n      priority: email.priority,\n      action_needed: email.action_needed,\n      archive: email.archive,\n      addedAt: new Date().toISOString()\n    };\n  }\n}\n\nreturn email;\n"
+        "jsCode": "const email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nif (!email.cached && email.confidence >= 0.85) {\n  if (!staticData.senderCache) staticData.senderCache = {};\n  if (!staticData.senderCounts) staticData.senderCounts = {};\n  \n  const key = email.senderEmail;\n  if (!staticData.senderCounts[key]) {\n    staticData.senderCounts[key] = { category: email.category, count: 1 };\n  } else if (staticData.senderCounts[key].category === email.category) {\n    staticData.senderCounts[key].count++;\n  } else {\n    staticData.senderCounts[key] = { category: email.category, count: 1 };\n  }\n  \n  if (staticData.senderCounts[key].count >= 3) {\n    staticData.senderCache[key] = {\n      category: email.category,\n      priority: email.priority,\n      action_needed: email.action_needed,\n      archive: email.archive,\n      addedAt: new Date().toISOString()\n    };\n  }\n}\n\nreturn email;\n"
       },
       "id": "update-cache",
       "name": "Update Cache",
@@ -122,7 +142,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Merge cached and AI-classified emails\nconst items = $input.all();\nreturn items.map(item => item.json);\n"
+        "jsCode": "const items = $input.all();\nreturn items.map(item => item.json);\n"
       },
       "id": "merge",
       "name": "Merge Results",
@@ -150,7 +170,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build label names based on classification\nconst email = $input.first().json;\n\nconst labels = [];\n\n// Category label\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabels.push(categoryMap[email.category] || '#Other');\n\n// Priority label for P1/P2\nif (email.priority === 'P1') {\n  labels.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labels.push('@Action/Review');\n}\n\n// System processed label\nlabels.push('_System/Processed');\n\n// Low confidence review label\nif (email.confidence < 0.70) {\n  labels.push('_System/Review');\n}\n\nreturn {\n  ...email,\n  labelsToAdd: labels,\n  shouldArchive: email.archive && email.confidence >= 0.70\n};\n"
+        "jsCode": "// Build label names and resolve to Gmail label IDs\nconst email = $input.first().json;\n\n// Get label map from Fetch Labels node\nconst labelsData = $('Fetch Labels').first().json;\nconst gmailLabels = labelsData.labels || [];\nconst labelMap = {};\nfor (const l of gmailLabels) {\n  labelMap[l.name] = l.id;\n}\n\n// Determine which label names to apply\nconst labelNames = [];\n\n// Category label\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabelNames.push(categoryMap[email.category] || '#Other');\n\nif (email.priority === 'P1') {\n  labelNames.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labelNames.push('@Action/Review');\n}\n\nlabelNames.push('_System/Processed');\n\nif (email.confidence < 0.70) {\n  labelNames.push('_System/Review');\n}\n\n// Resolve names to IDs, skip any that don't exist\nconst labelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nreturn {\n  ...email,\n  labelsToAdd: labelIds,\n  labelNamesAdded: labelNames,\n  shouldArchive: email.archive && email.confidence >= 0.70\n};\n"
       },
       "id": "build-labels",
       "name": "Build Labels",
@@ -160,14 +180,19 @@
     },
     {
       "parameters": {
-        "operation": "addLabels",
-        "messageId": "={{ $json.messageId }}",
-        "labelIds": "={{ $json.labelsToAdd }}"
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/modify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"addLabelIds\": {{ JSON.stringify($json.labelsToAdd) }}\n}",
+        "options": {}
       },
       "id": "add-labels",
       "name": "Add Labels",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
       "position": [2000, 200],
       "credentials": {
         "gmailOAuth2": {
@@ -195,14 +220,19 @@
     },
     {
       "parameters": {
-        "operation": "removeLabels",
-        "messageId": "={{ $json.messageId }}",
-        "labelIds": ["INBOX"]
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/modify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"removeLabelIds\": [\"INBOX\"]\n}",
+        "options": {}
       },
       "id": "archive",
       "name": "Archive (Remove INBOX)",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
       "position": [2440, 100],
       "credentials": {
         "gmailOAuth2": {
@@ -221,7 +251,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Handle low confidence - keep in inbox with review label\nconst email = $input.first().json;\n\nreturn {\n  ...email,\n  labelsToAdd: [\n    '_System/Processed',\n    '_System/Review'\n  ],\n  shouldArchive: false\n};\n"
+        "jsCode": "// Handle low confidence - resolve label IDs\nconst email = $input.first().json;\n\nconst labelsData = $('Fetch Labels').first().json;\nconst gmailLabels = labelsData.labels || [];\nconst labelMap = {};\nfor (const l of gmailLabels) {\n  labelMap[l.name] = l.id;\n}\n\nconst labelNames = ['_System/Processed', '_System/Review'];\nconst labelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nreturn {\n  ...email,\n  labelsToAdd: labelIds,\n  labelNamesAdded: labelNames,\n  shouldArchive: false\n};\n"
       },
       "id": "low-confidence",
       "name": "Low Confidence Handler",
@@ -236,6 +266,11 @@
         [
           {
             "node": "Preprocess Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Labels",
             "type": "main",
             "index": 0
           }
@@ -401,16 +436,8 @@
   },
   "staticData": null,
   "tags": [
-    {
-      "name": "email",
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "updatedAt": "2024-01-01T00:00:00.000Z"
-    },
-    {
-      "name": "automation",
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "updatedAt": "2024-01-01T00:00:00.000Z"
-    }
+    { "name": "email" },
+    { "name": "automation" }
   ],
   "triggerCount": 1,
   "pinData": {}
