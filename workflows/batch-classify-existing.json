@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Cache label map in static data\nconst labelsResponse = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nconst labelMap = {};\nfor (const l of (labelsResponse.labels || [])) {\n  labelMap[l.name] = l.id;\n}\nstaticData.labelMap = labelMap;\n\nreturn { json: { labelCount: Object.keys(labelMap).length, message: 'Labels cached' } };\n"
+        "jsCode": "const labelsResponse = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nconst labelMap = {};\nfor (const l of (labelsResponse.labels || [])) {\n  labelMap[l.name] = l.id;\n}\nstaticData.labelMap = labelMap;\nstaticData.batchCount = 0;\nstaticData.totalProcessed = 0;\nstaticData.totalArchived = 0;\n\nreturn { json: { labelCount: Object.keys(labelMap).length } };\n"
       },
       "id": "cache-labels",
       "name": "Cache Labels",
@@ -54,7 +54,7 @@
             },
             {
               "name": "maxResults",
-              "value": "100"
+              "value": "50"
             }
           ]
         },
@@ -74,13 +74,40 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract message IDs and split into individual items\nconst response = $input.first().json;\nconst messages = response.messages || [];\n\nif (messages.length === 0) {\n  return [{ json: { done: true, message: 'No emails in inbox' } }];\n}\n\nreturn messages.map(m => ({ json: { messageId: m.id, threadId: m.threadId } }));\n"
+        "jsCode": "const response = $input.first().json;\nconst messages = response.messages || [];\nconst resultSizeEstimate = response.resultSizeEstimate || 0;\n\nif (messages.length === 0) {\n  return [{ json: { done: true, remaining: 0 } }];\n}\n\nreturn messages.map(m => ({\n  json: {\n    messageId: m.id,\n    threadId: m.threadId,\n    done: false,\n    remaining: resultSizeEstimate\n  }\n}));\n"
       },
       "id": "split-messages",
       "name": "Split Messages",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1040, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.done }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-done",
+      "name": "Inbox Empty?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{\n  json: {\n    message: 'Inbox Zero achieved!',\n    totalProcessed: staticData.totalProcessed || 0,\n    totalArchived: staticData.totalArchived || 0,\n    batchesRun: staticData.batchCount || 0\n  }\n}];\n"
+      },
+      "id": "done",
+      "name": "Done - Inbox Zero!",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 200]
     },
     {
       "parameters": {
@@ -110,7 +137,7 @@
       "name": "Get Email Details",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1240, 300],
+      "position": [1460, 400],
       "credentials": {
         "gmailOAuth2": {
           "id": "GMAIL_CREDENTIAL_ID",
@@ -120,13 +147,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// Preprocess email for classification\nconst email = $input.first().json;\n\nif (email.done) return email;\n\nconst headers = email.payload?.headers || [];\nconst getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';\n\nconst fromHeader = getHeader('From');\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\nconst subject = getHeader('Subject') || '(no subject)';\n\n// Extract body\nlet body = '';\nfunction extractText(part) {\n  if (part.mimeType === 'text/plain' && part.body?.data) {\n    return Buffer.from(part.body.data, 'base64').toString('utf-8');\n  }\n  if (part.parts) {\n    for (const p of part.parts) {\n      const text = extractText(p);\n      if (text) return text;\n    }\n  }\n  return '';\n}\nbody = extractText(email.payload || {});\n\n// Clean up\nbody = body.replace(/<[^>]*>/g, ' ');\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\nbody = body.replace(/\\s+/g, ' ').trim();\nconst bodyPreview = body.substring(0, 1500);\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject,\n  bodyPreview,\n  snippet: email.snippet || '',\n  labelIds: email.labelIds || []\n};\n"
+        "jsCode": "const email = $input.first().json;\n\nconst headers = email.payload?.headers || [];\nconst getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';\n\nconst fromHeader = getHeader('From');\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\nconst subject = getHeader('Subject') || '(no subject)';\n\nlet body = '';\nfunction extractText(part) {\n  if (part.mimeType === 'text/plain' && part.body?.data) {\n    return Buffer.from(part.body.data, 'base64').toString('utf-8');\n  }\n  if (part.parts) {\n    for (const p of part.parts) {\n      const text = extractText(p);\n      if (text) return text;\n    }\n  }\n  return '';\n}\nbody = extractText(email.payload || {});\nbody = body.replace(/<[^>]*>/g, ' ');\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\nbody = body.replace(/\\s+/g, ' ').trim();\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject,\n  bodyPreview: body.substring(0, 1500),\n  snippet: email.snippet || ''\n};\n"
       },
       "id": "preprocess",
       "name": "Preprocess",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1440, 300]
+      "position": [1660, 400]
     },
     {
       "parameters": {
@@ -159,7 +186,7 @@
       "name": "AI Classification",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1640, 300],
+      "position": [1860, 400],
       "credentials": {
         "anthropicApi": {
           "id": "ANTHROPIC_CREDENTIAL_ID",
@@ -169,23 +196,23 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse AI response\nconst emailData = $('Preprocess').item;\nconst aiResponse = $input.first().json;\n\nlet classification;\ntry {\n  const content = aiResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    classification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found');\n  }\n} catch (e) {\n  classification = {\n    category: 'Other',\n    priority: 'P2',\n    action_needed: false,\n    archive: false,\n    confidence: 0.5,\n    summary: 'Classification failed'\n  };\n}\n\nreturn { ...emailData.json, ...classification };\n"
+        "jsCode": "const emailData = $('Preprocess').item;\nconst aiResponse = $input.first().json;\n\nlet classification;\ntry {\n  const content = aiResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    classification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found');\n  }\n} catch (e) {\n  classification = {\n    category: 'Other',\n    priority: 'P2',\n    action_needed: false,\n    archive: false,\n    confidence: 0.5,\n    summary: 'Classification failed'\n  };\n}\n\nreturn { ...emailData.json, ...classification };\n"
       },
       "id": "parse-ai",
       "name": "Parse Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1840, 300]
+      "position": [2060, 400]
     },
     {
       "parameters": {
-        "jsCode": "// Build label IDs from classification\nconst email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nconst labelMap = staticData.labelMap || {};\n\nconst labelNames = [];\n\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabelNames.push(categoryMap[email.category] || '#Other');\n\nif (email.priority === 'P1') {\n  labelNames.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labelNames.push('@Action/Review');\n}\n\nlabelNames.push('_System/Processed');\n\nif (email.confidence < 0.70) {\n  labelNames.push('_System/Review');\n}\n\nconst addLabelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nconst removeLabelIds = (email.archive && email.confidence >= 0.70) ? ['INBOX'] : [];\n\nreturn {\n  messageId: email.messageId,\n  subject: email.subject,\n  category: email.category,\n  priority: email.priority,\n  confidence: email.confidence,\n  summary: email.summary,\n  archive: email.archive && email.confidence >= 0.70,\n  labelNames,\n  addLabelIds,\n  removeLabelIds\n};\n"
+        "jsCode": "const email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nconst labelMap = staticData.labelMap || {};\n\nconst labelNames = [];\n\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabelNames.push(categoryMap[email.category] || '#Other');\n\nif (email.priority === 'P1') {\n  labelNames.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labelNames.push('@Action/Review');\n}\n\nlabelNames.push('_System/Processed');\n\nif (email.confidence < 0.70) {\n  labelNames.push('_System/Review');\n}\n\nconst addLabelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nconst shouldArchive = email.archive && email.confidence >= 0.70;\nconst removeLabelIds = shouldArchive ? ['INBOX'] : [];\n\n// Track stats\nstaticData.totalProcessed = (staticData.totalProcessed || 0) + 1;\nif (shouldArchive) staticData.totalArchived = (staticData.totalArchived || 0) + 1;\n\nreturn {\n  messageId: email.messageId,\n  subject: email.subject,\n  category: email.category,\n  priority: email.priority,\n  confidence: email.confidence,\n  summary: email.summary,\n  archived: shouldArchive,\n  labelNames,\n  addLabelIds,\n  removeLabelIds\n};\n"
       },
       "id": "build-labels",
       "name": "Build Labels",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2040, 300]
+      "position": [2260, 400]
     },
     {
       "parameters": {
@@ -209,7 +236,7 @@
       "name": "Apply Labels + Archive",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2240, 300],
+      "position": [2460, 400],
       "credentials": {
         "gmailOAuth2": {
           "id": "GMAIL_CREDENTIAL_ID",
@@ -219,134 +246,124 @@
     },
     {
       "parameters": {
-        "jsCode": "// Summary of batch processing\nconst items = $input.all();\nconst total = items.length;\nconst archived = items.filter(i => i.json.removeLabelIds?.includes('INBOX')).length;\n\nconst categories = {};\nfor (const item of items) {\n  const cat = item.json.addLabelIds?.[0] || 'unknown';\n  categories[cat] = (categories[cat] || 0) + 1;\n}\n\nreturn [{\n  json: {\n    message: `Processed ${total} emails, archived ${archived}`,\n    total,\n    archived,\n    kept: total - archived\n  }\n}];\n"
+        "jsCode": "// Batch complete - increment counter and loop back\nconst staticData = $getWorkflowStaticData('global');\nstaticData.batchCount = (staticData.batchCount || 0) + 1;\n\nreturn [{ json: { \n  batchNumber: staticData.batchCount,\n  totalProcessed: staticData.totalProcessed || 0,\n  totalArchived: staticData.totalArchived || 0,\n  message: `Batch ${staticData.batchCount} done. Processed ${staticData.totalProcessed} total. Checking for more...`\n} }];\n"
       },
-      "id": "summary",
-      "name": "Summary",
+      "id": "batch-done",
+      "name": "Batch Complete",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2440, 300]
+      "position": [2660, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Small delay between batches to avoid rate limits\nawait new Promise(resolve => setTimeout(resolve, 2000));\nreturn $input.all();\n"
+      },
+      "id": "delay",
+      "name": "Delay 2s",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 400]
     }
   ],
   "connections": {
     "Manual Trigger": {
       "main": [
         [
-          {
-            "node": "Fetch Labels",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Fetch Labels", "type": "main", "index": 0 }
         ]
       ]
     },
     "Fetch Labels": {
       "main": [
         [
-          {
-            "node": "Cache Labels",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Cache Labels", "type": "main", "index": 0 }
         ]
       ]
     },
     "Cache Labels": {
       "main": [
         [
-          {
-            "node": "List Inbox Emails",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "List Inbox Emails", "type": "main", "index": 0 }
         ]
       ]
     },
     "List Inbox Emails": {
       "main": [
         [
-          {
-            "node": "Split Messages",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Split Messages", "type": "main", "index": 0 }
         ]
       ]
     },
     "Split Messages": {
       "main": [
         [
-          {
-            "node": "Get Email Details",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Inbox Empty?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Inbox Empty?": {
+      "main": [
+        [
+          { "node": "Done - Inbox Zero!", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Get Email Details", "type": "main", "index": 0 }
         ]
       ]
     },
     "Get Email Details": {
       "main": [
         [
-          {
-            "node": "Preprocess",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Preprocess", "type": "main", "index": 0 }
         ]
       ]
     },
     "Preprocess": {
       "main": [
         [
-          {
-            "node": "AI Classification",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "AI Classification", "type": "main", "index": 0 }
         ]
       ]
     },
     "AI Classification": {
       "main": [
         [
-          {
-            "node": "Parse Response",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Parse Response", "type": "main", "index": 0 }
         ]
       ]
     },
     "Parse Response": {
       "main": [
         [
-          {
-            "node": "Build Labels",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Build Labels", "type": "main", "index": 0 }
         ]
       ]
     },
     "Build Labels": {
       "main": [
         [
-          {
-            "node": "Apply Labels + Archive",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Apply Labels + Archive", "type": "main", "index": 0 }
         ]
       ]
     },
     "Apply Labels + Archive": {
       "main": [
         [
-          {
-            "node": "Summary",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Batch Complete", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Batch Complete": {
+      "main": [
+        [
+          { "node": "Delay 2s", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Delay 2s": {
+      "main": [
+        [
+          { "node": "List Inbox Emails", "type": "main", "index": 0 }
         ]
       ]
     }
