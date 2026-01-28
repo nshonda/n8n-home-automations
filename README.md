@@ -1,90 +1,54 @@
 # n8n Home Automations
 
-AI-powered email classification and inbox zero automation using self-hosted [n8n](https://n8n.io/), Gmail API, and Claude AI.
+A collection of home automation workflows for self-hosted [n8n](https://n8n.io/), running on Docker behind a Cloudflare Tunnel.
 
-## What It Does
+## Automations
 
-Automatically classifies incoming Gmail messages using Claude 3.5 Haiku, applies hierarchical labels, and archives everything out of your inbox. Emails are organized into label-based views (Multiple Inbox sections in Gmail) so you see what matters without manual sorting.
+### Email Classifier (Inbox Zero)
 
-```
-Gmail ──> n8n (self-hosted) ──> Claude Haiku ──> Labels + Archive
-               ↑
-        Cloudflare Tunnel
-```
+AI-powered email classification using Claude 3.5 Haiku. Automatically labels and archives all incoming Gmail messages for true inbox zero.
 
 - Classifies emails in English and Brazilian Portuguese
-- Applies category labels (`#Finance`, `#Shopping`, `#Travel`, etc.)
-- Flags priority and action-needed items (`@Action/Reply`, `!Priority/Urgent`)
-- Archives all processed emails for true inbox zero
-- Handles promotional/transactional email detection (noreply, unsubscribe links)
+- Applies hierarchical labels (`#Finance`, `@Action/Reply`, `!Priority/Urgent`, etc.)
+- Archives all processed emails out of the inbox
+- Detects promotional/transactional emails (noreply, unsubscribe)
+- Batch processor for existing inbox backlog
 
-## Label System
+**Workflows:**
+- `email-classifier.json` — Continuous classifier triggered on new emails
+- `batch-classify-existing.json` — One-time batch processor (loops until inbox is empty)
+- `setup-gmail-labels.json` — Creates the 43 Gmail labels (run once)
 
-| Prefix | Purpose | Examples |
-|--------|---------|---------|
-| `@` | Action required | `@Action/Reply`, `@Action/Review`, `@Action/Pay` |
-| `#` | Category | `#Finance`, `#Shopping`, `#Travel`, `#Work` |
-| `!` | Priority | `!Priority/Urgent`, `!Priority/Important` |
-| `~` | Reference | `~Reference/Docs`, `~Reference/Receipts` |
-| `_` | System | `_System/Processed`, `_System/Review` |
+**Docs:** [Quick Start](docs/quick-start.md) | [Gmail OAuth Setup](docs/gmail-oauth-setup.md)
 
-## Workflows
+## Infrastructure
 
-### `email-classifier.json` — Main Classifier
-Triggered on new Gmail messages. Fetches label IDs, classifies via Claude Haiku, applies labels, and archives. Runs continuously.
+### Deployment
 
-### `batch-classify-existing.json` — Batch Processor
-Processes existing inbox emails in batches of 50 with a loop until the inbox is empty. Run once to reach inbox zero on your backlog.
+```bash
+git clone https://github.com/nshonda/n8n-home-automations.git
+cd n8n-home-automations/deploy
+cp .env.example .env   # edit with your values
+docker compose up -d
+```
 
-### `setup-gmail-labels.json` — Label Setup
-Creates all 43 Gmail labels. Import and run once before activating the classifier.
+n8n runs as a standalone Docker container alongside other services (e.g. media stacks, Portainer). Exposed via Cloudflare Tunnel on a custom subdomain.
 
-## Prerequisites
+### Requirements
 
 - Linux server with Docker
-- Domain with Cloudflare DNS (for tunnel)
-- Gmail account with OAuth2 credentials
-- [Anthropic API key](https://console.anthropic.com/) (~$1-2/month for typical usage)
-
-## Quick Start
-
-1. **Deploy n8n**
-   ```bash
-   git clone https://github.com/nshonda/n8n-home-automations.git
-   cd n8n-home-automations/deploy
-   cp .env.example .env   # edit with your values
-   docker compose up -d
-   ```
-
-2. **Set up Cloudflare Tunnel** — point your subdomain to `localhost:5678`
-
-3. **Configure Gmail OAuth2** — see [docs/gmail-oauth-setup.md](docs/gmail-oauth-setup.md)
-
-4. **Create labels** — import `workflows/setup-gmail-labels.json` in n8n and run it
-
-5. **Import & activate** — import `workflows/email-classifier.json`, connect your Gmail and Anthropic credentials, and activate
-
-See [docs/quick-start.md](docs/quick-start.md) for detailed steps.
+- Domain with Cloudflare DNS
+- Service-specific credentials (Gmail OAuth2, Anthropic API key, etc.)
 
 ## Project Structure
 
 ```
 workflows/          n8n workflow JSON files
 deploy/             Docker Compose config and setup script
-docs/               OAuth setup and deployment guides
-scripts/            Helper scripts (label creation)
+docs/               Setup and deployment guides
+scripts/            Helper scripts
 _context/           Research notes and architecture docs
 ```
-
-## Cost
-
-| Emails/Month | Estimated Cost |
-|-------------|---------------|
-| 500 | ~$0.50 |
-| 2,000 | ~$1.80 |
-| 10,000 | ~$8.80 |
-
-Sender caching reduces costs by 40-60% for repeat senders.
 
 ## License
 
