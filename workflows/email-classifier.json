@@ -13,7 +13,7 @@
           ]
         },
         "filters": {
-          "q": "in:inbox is:unread"
+          "q": "in:inbox -label:_System/Processed"
         },
         "options": {
           "maxResults": 10
@@ -115,7 +115,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. Analyze this email and return ONLY valid JSON.\\n\\nCategories: Finance, Work, Personal, Shopping, Travel, Notifications, Newsletters, Social, Receipts, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, ' ').substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"archive\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence>\\\"\\n}\\n\\nRules:\\n- Marketing with fake urgency (\\\"Last chance!\\\") = P3\\n- CC'd (not To'd) = usually P3\\n- Security alerts (if not self-initiated) = P1\\n- Receipts with no action = P3\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. You understand emails in English and Brazilian Portuguese equally well.\\n\\nAnalyze this email and return ONLY valid JSON.\\n\\nCategories: Finance, Work, Personal, Shopping, Travel, Notifications, Newsletters, Social, Receipts, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, ' ').substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"archive\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence in English>\\\"\\n}\\n\\nRules:\\n- Marketing/promotional with fake urgency (Last chance!, So hoje!, Ultima chance!, Aproveite!) = Newsletters, P3, archive=true, confidence>=0.90\\n- Emails from noreply@ or no-reply@ = usually P3, archive=true\\n- Emails with Unsubscribe or Cancelar inscricao = Newsletters, P3, archive=true\\n- CC'd (not To'd) = usually P3\\n- Security alerts (password reset, login attempt) = Security, P1\\n- Receipts/confirmations with no action = Receipts, P3, archive=true\\n- Bank/financial alerts = Finance, P2\\n- Order confirmations, shipping = Shopping, P3, archive=true\\n- Be confident: if clearly promotional or automated, set confidence >= 0.90\\n- Always return valid JSON, nothing else\"\n    }\n  ]\n}",
         "options": {}
       },
       "id": "ai-classify",
