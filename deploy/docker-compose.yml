@@ -13,6 +13,11 @@ services:
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - WEBHOOK_URL=https://${N8N_HOST:-n8n.example.com}/
+      - N8N_EDITOR_BASE_URL=https://${N8N_HOST:-n8n.example.com}/
+
+      # Proxy settings (for Cloudflare tunnel)
+      - N8N_SECURE_COOKIE=false
+      - N8N_TRUST_PROXY=true
 
       # Security - REQUIRED: Generate with: openssl rand -hex 32
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
