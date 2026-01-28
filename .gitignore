@@ -1,0 +1,15 @@
+# Local settings
+.claude/
+.env
+
+# OS files
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+token.pickle
+credentials.json
+
+# Node
+node_modules/
