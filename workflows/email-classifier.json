@@ -72,24 +72,20 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "anthropic-version",
               "value": "2023-06-01"
-            },
-            {
-              "name": "content-type",
-              "value": "application/json"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. Analyze this email and return ONLY valid JSON.\\n\\nCategories: Finance, Work, Personal, Shopping, Travel, Notifications, Newsletters, Social, Receipts, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, ' ').substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"archive\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence>\\\"\\n}\\n\\nRules:\\n- Marketing with fake urgency (\\\"Last chance!\\\") = P3\\n- CC'd (not To'd) = usually P3\\n- Security alerts (if not self-initiated) = P1\\n- Receipts with no action = P3\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. Analyze this email and return ONLY valid JSON.\\n\\nCategories: Finance, Work, Personal, Shopping, Travel, Notifications, Newsletters, Social, Receipts, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, ' ').substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"archive\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence>\\\"\\n}\\n\\nRules:\\n- Marketing with fake urgency (\\\"Last chance!\\\") = P3\\n- CC'd (not To'd) = usually P3\\n- Security alerts (if not self-initiated) = P1\\n- Receipts with no action = P3\"\n    }\n  ]\n}",
         "options": {}
       },
       "id": "ai-classify",
@@ -98,7 +94,7 @@
       "typeVersion": 4.1,
       "position": [1120, 400],
       "credentials": {
-        "httpHeaderAuth": {
+        "anthropicApi": {
           "id": "ANTHROPIC_CREDENTIAL_ID",
           "name": "Anthropic API"
         }
