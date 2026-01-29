@@ -54,7 +54,7 @@
             },
             {
               "name": "maxResults",
-              "value": "50"
+              "value": "20"
             }
           ]
         },
@@ -176,10 +176,11 @@
         "options": {
           "batching": {
             "batch": {
-              "batchSize": 2,
-              "batchInterval": 1000
+              "batchSize": 1,
+              "batchInterval": 2000
             }
-          }
+          },
+          "timeout": 30000
         }
       },
       "id": "ai-classify",
@@ -187,6 +188,9 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [1860, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
       "credentials": {
         "anthropicApi": {
           "id": "ANTHROPIC_CREDENTIAL_ID",
