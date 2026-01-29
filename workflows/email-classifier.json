@@ -196,7 +196,7 @@
         "nodeCredentialType": "gmailOAuth2",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"addLabelIds\": {{ JSON.stringify($json.labelsToAdd) }}\n}",
+        "jsonBody": "={\n  \"addLabelIds\": {{ JSON.stringify($json.labelsToAdd) }},\n  \"removeLabelIds\": [\"INBOX\"]\n}",
         "options": {}
       },
       "id": "add-labels",
@@ -210,54 +210,6 @@
           "name": "Gmail OAuth2"
         }
       }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{ $json.shouldArchive }}",
-              "value2": true
-            }
-          ]
-        }
-      },
-      "id": "should-archive",
-      "name": "Should Archive?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [2220, 200]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/modify",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "gmailOAuth2",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "{\n  \"removeLabelIds\": [\"INBOX\"]\n}",
-        "options": {}
-      },
-      "id": "archive",
-      "name": "Archive (Remove INBOX)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [2440, 100],
-      "credentials": {
-        "gmailOAuth2": {
-          "id": "GMAIL_CREDENTIAL_ID",
-          "name": "Gmail OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {},
-      "id": "no-archive",
-      "name": "Keep in Inbox",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [2440, 300]
     },
     {
       "parameters": {
@@ -430,31 +382,8 @@
     },
     "Add Labels": {
       "main": [
-        [
-          {
-            "node": "Should Archive?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
-    },
-    "Should Archive?": {
-      "main": [
-        [
-          {
-            "node": "Archive (Remove INBOX)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Keep in Inbox",
-            "type": "main",
-            "index": 0
-          }
-        ]
       ]
     }
   },
