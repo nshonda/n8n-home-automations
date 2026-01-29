@@ -30,6 +30,7 @@ services:
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=168
       - N8N_RUNNERS_TASK_TIMEOUT=600
+      - NODE_OPTIONS=--max-old-space-size=4096
 
       # Optional: Basic auth for additional security
       # - N8N_BASIC_AUTH_ACTIVE=true
