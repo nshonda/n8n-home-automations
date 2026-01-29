@@ -21,6 +21,21 @@ AI-powered email classification using Claude 3.5 Haiku. Automatically labels and
 
 **Docs:** [Quick Start](docs/quick-start.md) | [Gmail OAuth Setup](docs/gmail-oauth-setup.md)
 
+### Invoice Forwarding
+
+Automatically collects monthly invoices from Husky and Deel, then sends them to the accountant with both PDFs attached.
+
+- Husky path: detects payment email, downloads PDF attachment, uploads to Google Drive staging folder
+- Deel path: detects payment email, sends a reminder to manually download and upload the Deel invoice
+- Convergence: watches the staging folder — when both PDFs are present, composes and sends the email
+- Email sent to accountant with subject `Notas Fiscais [Month] [Year]` and both invoices attached
+- Processed emails labeled `_System/InvoiceProcessed`, files moved to `Invoices/Processed`
+
+**Workflows:**
+- `forward-invoices.json` — Three-trigger workflow (Husky email, Deel email, Google Drive watcher)
+
+**Docs:** [Invoice Forwarding Setup](docs/invoice-forwarding-setup.md)
+
 ## Infrastructure
 
 ### Deployment

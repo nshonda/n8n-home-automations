@@ -1,0 +1,615 @@
+{
+  "name": "Forward Monthly Invoices",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "filters": {
+          "q": "from:friends@husky.io subject:\"Money is coming\" has:attachment -label:_System/InvoiceProcessed"
+        },
+        "options": {}
+      },
+      "id": "husky-trigger",
+      "name": "Husky Email Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [240, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "get-husky-message",
+      "name": "Get Husky Full Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract PDF attachment from Husky email\nconst message = $input.first().json;\nconst parts = message.payload?.parts || [];\n\nlet pdfPart = null;\nfor (const part of parts) {\n  if (part.mimeType === 'application/pdf' || (part.filename && part.filename.endsWith('.pdf'))) {\n    pdfPart = part;\n    break;\n  }\n  // Check nested parts\n  if (part.parts) {\n    for (const nested of part.parts) {\n      if (nested.mimeType === 'application/pdf' || (nested.filename && nested.filename.endsWith('.pdf'))) {\n        pdfPart = nested;\n        break;\n      }\n    }\n  }\n}\n\nif (!pdfPart) {\n  throw new Error('No PDF attachment found in Husky email');\n}\n\nreturn {\n  messageId: message.id,\n  attachmentId: pdfPart.body.attachmentId,\n  filename: pdfPart.filename\n};\n"
+      },
+      "id": "extract-attachment-info",
+      "name": "Extract Attachment Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/attachments/{{ $json.attachmentId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "download-husky-attachment",
+      "name": "Download Husky Attachment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decode base64url attachment and prepare for Google Drive upload\nconst attachmentData = $input.first().json;\nconst prevData = $('Extract Attachment Info').first().json;\n\n// Gmail uses base64url encoding\nconst base64Data = attachmentData.data\n  .replace(/-/g, '+')\n  .replace(/_/g, '/');\n\nconst buffer = Buffer.from(base64Data, 'base64');\n\nreturn {\n  json: {\n    messageId: prevData.messageId,\n    filename: prevData.filename\n  },\n  binary: {\n    data: {\n      data: buffer.toString('base64'),\n      mimeType: 'application/pdf',\n      fileName: prevData.filename\n    }\n  }\n};\n"
+      },
+      "id": "prepare-husky-pdf",
+      "name": "Prepare Husky PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "name": "={{ $json.filename }}",
+        "folderId": {
+          "__rl": true,
+          "value": "INVOICES_PENDING_FOLDER_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "upload-husky-to-drive",
+      "name": "Upload Husky PDF to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1340, 200],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $('Extract Attachment Info').first().json.messageId }}/modify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "addLabelIds",
+              "value": "={{ JSON.stringify([$getWorkflowStaticData('global').invoiceProcessedLabelId || 'Label_InvoiceProcessed']) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "label-husky-email",
+      "name": "Label Husky Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "filters": {
+          "q": "from:no-reply@deel.support subject:\"money's on the way\" -label:_System/InvoiceProcessed"
+        },
+        "options": {}
+      },
+      "id": "deel-trigger",
+      "name": "Deel Email Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [240, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Deel Email Trigger').first().json.payload?.headers?.find(h => h.name === 'Delivered-To')?.value || 'me' }}",
+        "subject": "Reminder: Download Deel Invoice",
+        "message": "A Deel payment notification was received. Please download the invoice from Deel and upload the PDF to the Google Drive folder: Invoices/Pending\n\nOnce both the Husky and Deel invoices are in the folder, the workflow will automatically compose and send the email to the accountant.",
+        "options": {}
+      },
+      "id": "send-deel-reminder",
+      "name": "Send Deel Reminder",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [460, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $('Deel Email Trigger').first().json.id }}/modify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ addLabelIds: [$getWorkflowStaticData('global').invoiceProcessedLabelId || 'Label_InvoiceProcessed'] }) }}"
+      },
+      "id": "label-deel-email",
+      "name": "Label Deel Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 1,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "triggerOn": "fileCreated",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "INVOICES_PENDING_FOLDER_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "drive-trigger",
+      "name": "Drive Trigger - Pending Folder",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [240, 800],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "list",
+        "folderId": {
+          "__rl": true,
+          "value": "INVOICES_PENDING_FOLDER_ID",
+          "mode": "id"
+        },
+        "filter": {
+          "mimeType": "application/pdf"
+        },
+        "options": {}
+      },
+      "id": "list-pending-files",
+      "name": "List Pending Files",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [460, 800],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if we have at least 2 PDFs in the Pending folder (Husky + Deel)\nconst files = $input.all().map(item => item.json);\n\nif (files.length < 2) {\n  // Not enough files yet, stop execution\n  return [];\n}\n\n// We have 2+ PDFs — proceed\nconst now = new Date();\nconst monthsPt = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',\n                   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];\nconst month = monthsPt[now.getMonth()];\nconst year = now.getFullYear();\n\nreturn {\n  fileIds: files.map(f => f.id),\n  fileNames: files.map(f => f.name),\n  fileCount: files.length,\n  month,\n  year,\n  subject: `Notas Fiscais ${month} ${year}`\n};\n"
+      },
+      "id": "check-both-ready",
+      "name": "Check Both Ready",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 800]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.fileIds[0] }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "download-file-1",
+      "name": "Download PDF 1",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [900, 700],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.fileIds[1] }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "download-file-2",
+      "name": "Download PDF 2",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [900, 900],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-pdfs",
+      "name": "Merge PDFs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [1120, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the email with both PDFs attached\nconst checkData = $('Check Both Ready').first().json;\nconst items = $input.all();\n\nconst subject = checkData.subject;\nconst body = `Olá,\n\nSegue em anexo as notas fiscais referentes ao mês de ${checkData.month} de ${checkData.year}.\n\nEmpresas:\n- OneRhino LLC (Husky)\n- Deel Inc.\n\nQualquer dúvida, estou à disposição.\n\nAbraços`;\n\n// Collect binary data from both downloaded files\nconst binaryData = {};\nitems.forEach((item, idx) => {\n  const key = `attachment_${idx}`;\n  if (item.binary) {\n    const binaryKey = Object.keys(item.binary)[0];\n    binaryData[key] = item.binary[binaryKey];\n  }\n});\n\nreturn {\n  json: {\n    subject,\n    body,\n    fileIds: checkData.fileIds,\n    fileNames: checkData.fileNames\n  },\n  binary: binaryData\n};\n"
+      },
+      "id": "compose-email",
+      "name": "Compose Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 800]
+    },
+    {
+      "parameters": {
+        "sendTo": "mohamadhemersson@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {
+          "ccList": "mohamadariss@hotmail.com",
+          "appendAttribution": false,
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "attachment_0"
+              },
+              {
+                "property": "attachment_1"
+              }
+            ]
+          }
+        }
+      },
+      "id": "send-email",
+      "name": "Send Invoice Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1560, 800],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Move all files from Pending to Processed folder\nconst checkData = $('Check Both Ready').first().json;\nconst fileIds = checkData.fileIds;\n\n// Return file IDs for the next nodes to process\nreturn fileIds.map(id => ({ json: { fileId: id } }));\n"
+      },
+      "id": "prepare-cleanup",
+      "name": "Prepare Cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 800]
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.fileId }}",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "INVOICES_PROCESSED_FOLDER_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "move-to-processed",
+      "name": "Move to Processed",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2000, 800],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Husky Email Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Husky Full Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Husky Full Message": {
+      "main": [
+        [
+          {
+            "node": "Extract Attachment Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Attachment Info": {
+      "main": [
+        [
+          {
+            "node": "Download Husky Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Husky Attachment": {
+      "main": [
+        [
+          {
+            "node": "Prepare Husky PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Husky PDF": {
+      "main": [
+        [
+          {
+            "node": "Upload Husky PDF to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Husky PDF to Drive": {
+      "main": [
+        [
+          {
+            "node": "Label Husky Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deel Email Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Deel Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Deel Reminder": {
+      "main": [
+        [
+          {
+            "node": "Label Deel Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive Trigger - Pending Folder": {
+      "main": [
+        [
+          {
+            "node": "List Pending Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Pending Files": {
+      "main": [
+        [
+          {
+            "node": "Check Both Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Both Ready": {
+      "main": [
+        [
+          {
+            "node": "Download PDF 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download PDF 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF 1": {
+      "main": [
+        [
+          {
+            "node": "Merge PDFs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF 2": {
+      "main": [
+        [
+          {
+            "node": "Merge PDFs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge PDFs": {
+      "main": [
+        [
+          {
+            "node": "Compose Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Email": {
+      "main": [
+        [
+          {
+            "node": "Send Invoice Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Invoice Email": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Move to Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "placeholder"
+  },
+  "tags": []
+}
