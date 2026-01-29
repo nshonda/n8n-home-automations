@@ -196,7 +196,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const emailData = $('Preprocess').item;\nconst aiResponse = $input.first().json;\n\nlet classification;\ntry {\n  const content = aiResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    classification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found');\n  }\n} catch (e) {\n  classification = {\n    category: 'Other',\n    priority: 'P2',\n    action_needed: false,\n    archive: false,\n    confidence: 0.5,\n    summary: 'Classification failed'\n  };\n}\n\nreturn { ...emailData.json, ...classification };\n"
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const aiResponse = items[i].json;\n  let classification;\n  try {\n    const content = aiResponse.content?.[0]?.text || '';\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      classification = JSON.parse(jsonMatch[0]);\n    } else {\n      throw new Error('No JSON found');\n    }\n  } catch (e) {\n    classification = {\n      category: 'Other',\n      priority: 'P2',\n      action_needed: false,\n      archive: false,\n      confidence: 0.5,\n      summary: 'Classification failed'\n    };\n  }\n\n  // Get matching email data via paired item index\n  let emailData = {};\n  try {\n    emailData = $('Preprocess').all()[i]?.json || {};\n  } catch (e) {\n    // Fallback: try to get messageId from the HTTP request input\n    emailData = { messageId: aiResponse.id || 'unknown' };\n  }\n  results.push({ json: { ...emailData, ...classification } });\n}\n\nreturn results;\n"
       },
       "id": "parse-ai",
       "name": "Parse Response",
