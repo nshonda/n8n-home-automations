@@ -24,29 +24,15 @@ Schedule (midnight) ─→ Gmail API ─→ Count processed emails ─→ Discor
 4. Name it (e.g., "n8n Email Digest"), select the target channel
 5. Copy the **Webhook URL**
 
-## Step 2: Add Environment Variable
-
-Add to your `.env` file:
-
-```bash
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-```
-
-Restart n8n to pick up the new variable:
-
-```bash
-cd ~/n8n-email
-docker compose down && docker compose up -d
-```
-
-## Step 3: Import Workflow
+## Step 2: Import Workflow
 
 1. Open n8n at `https://n8n.yourdomain.com`
 2. Go to **Workflows** → **Import from File**
 3. Select `workflows/daily-digest.json`
 4. Update credential references:
    - Click each **HTTP Request** node that uses Gmail → Select your Gmail OAuth2 credential
-5. **Activate** the workflow
+5. Click the **Send to Discord** node → paste your webhook URL in the URL field
+6. **Activate** the workflow
 
 ## Testing
 
@@ -69,7 +55,7 @@ Edit the **Get Processed Emails** node query parameter to change what's included
 ## Troubleshooting
 
 ### No message in Discord
-- Verify `DISCORD_WEBHOOK_URL` is set in your environment
+- Verify the webhook URL is pasted in the **Send to Discord** node
 - Check n8n execution logs for HTTP errors
 - Test the webhook URL with `curl -X POST -H "Content-Type: application/json" -d '{"content":"test"}' YOUR_WEBHOOK_URL`
 

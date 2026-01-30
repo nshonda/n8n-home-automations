@@ -149,7 +149,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "url": "https://discord.com/api/webhooks/PASTE_YOUR_WEBHOOK_URL_HERE",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
