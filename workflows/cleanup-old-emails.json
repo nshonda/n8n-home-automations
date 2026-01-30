@@ -98,7 +98,7 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids) }},\n  \"addLabelIds\": [\"TRASH\"],\n  \"removeLabelIds\": [\"INBOX\", \"UNREAD\"]\n}",
-        "options": {}
+        "options": { "response": { "response": { "neverError": true, "responseFormat": "text" } } }
       },
       "id": "batch-trash",
       "name": "Batch Trash",

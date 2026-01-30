@@ -118,7 +118,7 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids) }},\n  \"removeLabelIds\": [\"{{ $getWorkflowStaticData('global').processedLabelId }}\"]\n}",
-        "options": {}
+        "options": { "response": { "response": { "neverError": true, "responseFormat": "text" } } }
       },
       "id": "batch-remove",
       "name": "Batch Remove Label",
