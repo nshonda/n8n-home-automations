@@ -1,0 +1,386 @@
+{
+  "name": "Batch Classify Historical Emails (Run Once)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "fetch-labels",
+      "name": "Fetch Labels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [440, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const labelsResponse = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nconst labelMap = {};\nfor (const l of (labelsResponse.labels || [])) {\n  labelMap[l.name] = l.id;\n}\nstaticData.labelMap = labelMap;\nstaticData.batchCount = 0;\nstaticData.totalProcessed = 0;\n\nreturn { json: { labelCount: Object.keys(labelMap).length } };\n"
+      },
+      "id": "cache-labels",
+      "name": "Cache Labels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "newer_than:2y -label:_System/Processed -category:promotions -category:spam is:read -in:inbox"
+            },
+            {
+              "name": "maxResults",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "list-emails",
+      "name": "List Emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [840, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst messages = response.messages || [];\nconst resultSizeEstimate = response.resultSizeEstimate || 0;\n\nif (messages.length === 0) {\n  return [{ json: { done: true, remaining: 0 } }];\n}\n\nreturn messages.map(m => ({\n  json: {\n    messageId: m.id,\n    threadId: m.threadId,\n    done: false,\n    remaining: resultSizeEstimate\n  }\n}));\n"
+      },
+      "id": "split-messages",
+      "name": "Split Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.done }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-done",
+      "name": "All Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{\n  json: {\n    message: 'Historical classification complete!',\n    totalProcessed: staticData.totalProcessed || 0,\n    batchesRun: staticData.batchCount || 0\n  }\n}];\n"
+      },
+      "id": "done",
+      "name": "Done!",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "format",
+              "value": "full"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "id": "get-email",
+      "name": "Get Email Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1460, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $input.first().json;\n\nconst headers = email.payload?.headers || [];\nconst getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';\n\nconst fromHeader = getHeader('From');\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\nconst subject = getHeader('Subject') || '(no subject)';\n\nlet body = '';\nfunction extractText(part) {\n  if (part.mimeType === 'text/plain' && part.body?.data) {\n    return Buffer.from(part.body.data, 'base64').toString('utf-8');\n  }\n  if (part.parts) {\n    for (const p of part.parts) {\n      const text = extractText(p);\n      if (text) return text;\n    }\n  }\n  return '';\n}\nbody = extractText(email.payload || {});\nbody = body.replace(/<[^>]*>/g, ' ');\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\nbody = body.replace(/\\s+/g, ' ').trim();\n\nconst sanitize = (str) => str.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ');\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject: sanitize(subject),\n  bodyPreview: sanitize(body.substring(0, 1500)),\n  snippet: email.snippet || ''\n};\n"
+      },
+      "id": "preprocess",
+      "name": "Preprocess",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. Analyze this email and return ONLY valid JSON.\\n\\nCategories: Finance, Work, Personal, Shopping, Travel, Notifications, Newsletters, Social, Receipts, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence>\\\"\\n}\\n\\nRules:\\n- Marketing with fake urgency (\\\"Last chance!\\\") = P3\\n- CC'd (not To'd) = usually P3\\n- Security alerts (if not self-initiated) = P1\\n- Receipts with no action = P3\"\n    }\n  ]\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "ai-classify",
+      "name": "AI Classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1860, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const aiResponse = items[i].json;\n  let classification;\n  try {\n    const content = aiResponse.content?.[0]?.text || '';\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      classification = JSON.parse(jsonMatch[0]);\n    } else {\n      throw new Error('No JSON found');\n    }\n  } catch (e) {\n    classification = {\n      category: 'Other',\n      priority: 'P2',\n      action_needed: false,\n      confidence: 0.5,\n      summary: 'Classification failed'\n    };\n  }\n\n  let emailData = {};\n  try {\n    emailData = $('Preprocess').all()[i]?.json || {};\n  } catch (e) {\n    emailData = { messageId: aiResponse.id || 'unknown' };\n  }\n  results.push({ json: { ...emailData, ...classification } });\n}\n\nreturn results;\n"
+      },
+      "id": "parse-ai",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2060, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nconst labelMap = staticData.labelMap || {};\n\nconst labelNames = [];\n\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Work': '#Work',\n  'Personal': '#Personal',\n  'Shopping': '#Shopping',\n  'Travel': '#Travel',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\nlabelNames.push(categoryMap[email.category] || '#Other');\n\nif (email.priority === 'P1') {\n  labelNames.push('!Priority/Urgent');\n} else if (email.priority === 'P2' && email.action_needed) {\n  labelNames.push('@Action/Review');\n}\n\nlabelNames.push('_System/Processed');\n\nif (email.confidence < 0.70) {\n  labelNames.push('_System/Review');\n}\n\nconst addLabelIds = labelNames\n  .map(name => labelMap[name])\n  .filter(id => id != null);\n\nstaticData.totalProcessed = (staticData.totalProcessed || 0) + 1;\n\nreturn {\n  messageId: email.messageId,\n  subject: email.subject,\n  category: email.category,\n  priority: email.priority,\n  confidence: email.confidence,\n  summary: email.summary,\n  labelNames,\n  addLabelIds\n};\n"
+      },
+      "id": "build-labels",
+      "name": "Build Labels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2260, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/modify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"addLabelIds\": {{ JSON.stringify($json.addLabelIds) }}\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "apply-labels",
+      "name": "Apply Labels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2460, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.batchCount = (staticData.batchCount || 0) + 1;\n\nreturn [{ json: { \n  batchNumber: staticData.batchCount,\n  totalProcessed: staticData.totalProcessed || 0,\n  message: `Batch ${staticData.batchCount} done. Processed ${staticData.totalProcessed} total. Checking for more...`\n} }];\n"
+      },
+      "id": "batch-done",
+      "name": "Batch Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "await new Promise(resolve => setTimeout(resolve, 2000));\nreturn $input.all();\n"
+      },
+      "id": "delay",
+      "name": "Delay 2s",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Fetch Labels", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Labels": {
+      "main": [
+        [
+          { "node": "Cache Labels", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Cache Labels": {
+      "main": [
+        [
+          { "node": "List Emails", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "List Emails": {
+      "main": [
+        [
+          { "node": "Split Messages", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Split Messages": {
+      "main": [
+        [
+          { "node": "All Done?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "All Done?": {
+      "main": [
+        [
+          { "node": "Done!", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Get Email Details", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Email Details": {
+      "main": [
+        [
+          { "node": "Preprocess", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Preprocess": {
+      "main": [
+        [
+          { "node": "AI Classification", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "AI Classification": {
+      "main": [
+        [
+          { "node": "Parse Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          { "node": "Build Labels", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Labels": {
+      "main": [
+        [
+          { "node": "Apply Labels", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Apply Labels": {
+      "main": [
+        [
+          { "node": "Batch Complete", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Batch Complete": {
+      "main": [
+        [
+          { "node": "Delay 2s", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Delay 2s": {
+      "main": [
+        [
+          { "node": "List Emails", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "email" },
+    { "name": "automation" },
+    { "name": "batch" }
+  ],
+  "triggerCount": 0,
+  "pinData": {}
+}

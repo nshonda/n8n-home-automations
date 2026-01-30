@@ -17,6 +17,7 @@ AI-powered email classification using Claude 3.5 Haiku. Automatically labels and
 **Workflows:**
 - `email-classifier.json` — Continuous classifier triggered on new emails
 - `batch-classify-existing.json` — One-time batch processor (loops until inbox is empty)
+- `batch-classify-historical.json` — Classifies archived emails from the last 2 years (labels only, no archiving)
 - `setup-gmail-labels.json` — Creates the 43 Gmail labels (run once)
 
 **Docs:** [Quick Start](docs/quick-start.md) | [Gmail OAuth Setup](docs/gmail-oauth-setup.md)
