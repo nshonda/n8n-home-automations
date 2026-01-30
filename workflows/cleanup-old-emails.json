@@ -1,0 +1,241 @@
+{
+  "name": "Cleanup Old Emails (Run Once)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.phase = 'old_unread';\nstaticData.deletedOldUnread = 0;\nstaticData.deletedSpam = 0;\nstaticData.batchCount = 0;\nreturn [{ json: { phase: 'old_unread' } }];\n"
+      },
+      "id": "init",
+      "name": "Init",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "=={{ $getWorkflowStaticData('global').phase === 'old_unread' ? 'is:unread older_than:2y' : 'in:spam' }}"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "list-emails",
+      "name": "List Emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [640, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst messages = response.messages || [];\nconst staticData = $getWorkflowStaticData('global');\n\nif (messages.length === 0) {\n  if (staticData.phase === 'old_unread') {\n    // Move to spam phase\n    staticData.phase = 'spam';\n    return [{ json: { done: false, phaseSwitch: true, remaining: 0 } }];\n  }\n  return [{ json: { done: true, remaining: 0 } }];\n}\n\nreturn messages.map(m => ({\n  json: {\n    messageId: m.id,\n    done: false,\n    phaseSwitch: false,\n    remaining: response.resultSizeEstimate || 0\n  }\n}));\n"
+      },
+      "id": "split-messages",
+      "name": "Split Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.done }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-done",
+      "name": "All Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1040, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{\n  json: {\n    message: 'Cleanup complete!',\n    deletedOldUnread: staticData.deletedOldUnread || 0,\n    deletedSpam: staticData.deletedSpam || 0,\n    batchesRun: staticData.batchCount || 0\n  }\n}];\n"
+      },
+      "id": "done",
+      "name": "Done!",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.phaseSwitch }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-phase-switch",
+      "name": "Phase Switch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1260, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/trash",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "trash-email",
+      "name": "Trash Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1460, 500],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.batchCount = (staticData.batchCount || 0) + 1;\n\nif (staticData.phase === 'old_unread') {\n  staticData.deletedOldUnread = (staticData.deletedOldUnread || 0) + $input.all().length;\n} else {\n  staticData.deletedSpam = (staticData.deletedSpam || 0) + $input.all().length;\n}\n\nreturn [{ json: {\n  batchNumber: staticData.batchCount,\n  phase: staticData.phase,\n  deletedOldUnread: staticData.deletedOldUnread || 0,\n  deletedSpam: staticData.deletedSpam || 0,\n  message: `Batch ${staticData.batchCount} done (${staticData.phase}). Checking for more...`\n} }];\n"
+      },
+      "id": "batch-done",
+      "name": "Batch Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "await new Promise(resolve => setTimeout(resolve, 1000));\nreturn $input.all();\n"
+      },
+      "id": "delay",
+      "name": "Delay 1s",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 500]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Init", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Init": {
+      "main": [
+        [
+          { "node": "List Emails", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "List Emails": {
+      "main": [
+        [
+          { "node": "Split Messages", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Split Messages": {
+      "main": [
+        [
+          { "node": "All Done?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "All Done?": {
+      "main": [
+        [
+          { "node": "Done!", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Phase Switch?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Phase Switch?": {
+      "main": [
+        [
+          { "node": "List Emails", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Trash Email", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trash Email": {
+      "main": [
+        [
+          { "node": "Batch Complete", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Batch Complete": {
+      "main": [
+        [
+          { "node": "Delay 1s", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Delay 1s": {
+      "main": [
+        [
+          { "node": "List Emails", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "email" },
+    { "name": "cleanup" }
+  ],
+  "triggerCount": 0,
+  "pinData": {}
+}
