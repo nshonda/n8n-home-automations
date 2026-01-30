@@ -1,6 +1,7 @@
 # Local settings
 .claude/
 .env
+_context/
 
 # OS files
 .DS_Store

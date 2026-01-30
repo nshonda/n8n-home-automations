@@ -78,7 +78,6 @@ workflows/          n8n workflow JSON files
 deploy/             Docker Compose config and setup script
 docs/               Setup and deployment guides
 scripts/            Helper scripts
-_context/           Research notes and architecture docs
 ```
 
 ## License
