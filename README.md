@@ -36,6 +36,20 @@ Automatically collects monthly invoices from Husky and Deel, then sends them to 
 
 **Docs:** [Invoice Forwarding Setup](docs/invoice-forwarding-setup.md)
 
+### Daily Digest
+
+Sends a daily Discord message summarizing all emails processed by the Email Classifier.
+
+- Runs at midnight (or manually triggered)
+- Color-coded embed: green (light day), yellow (moderate), red (heavy)
+- Shows total processed email count
+- Quiet day message when no emails were processed
+
+**Workflows:**
+- `daily-digest.json` — Nightly Discord digest via webhook
+
+**Docs:** [Daily Digest Setup](docs/daily-digest-setup.md)
+
 ## Infrastructure
 
 ### Deployment

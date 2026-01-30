@@ -1,0 +1,293 @@
+{
+  "name": "Daily Email Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute the date range for \"today\"\nconst now = new Date();\nconst startOfDay = new Date(now);\nstartOfDay.setHours(0, 0, 0, 0);\n\nreturn {\n  today: now.toISOString().split('T')[0],\n  dayOfWeek: now.toLocaleDateString('en-US', { weekday: 'long' }),\n  startOfDay: startOfDay.toISOString()\n};\n"
+      },
+      "id": "compute-date-range",
+      "name": "Compute Date Range",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "fetch-labels",
+      "name": "Fetch Labels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build ID -> name label map (reverse of email-classifier)\nconst labelsResponse = $input.first().json;\nconst dateInfo = $('Compute Date Range').first().json;\n\nconst labelMap = {};\nfor (const l of (labelsResponse.labels || [])) {\n  labelMap[l.id] = l.name;\n}\n\nreturn {\n  labelMap,\n  ...dateInfo\n};\n"
+      },
+      "id": "build-label-map",
+      "name": "Build Label Map",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "label:_System/Processed newer_than:1d"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-processed-emails",
+      "name": "Get Processed Emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ ($json.messages || []).length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "has-emails",
+      "name": "Has Emails?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract message IDs and fetch details for each\nconst messages = $('Get Processed Emails').first().json.messages || [];\nconst labelMapData = $('Build Label Map').first().json;\nconst labelMap = labelMapData.labelMap;\n\n// We have message IDs; categorize based on labels\n// For the digest, we'll use the message list metadata\nconst categories = {\n  'Priority/Urgent': [],\n  'Priority/Important': [],\n  'Action Needed': [],\n  'Finance': [],\n  'Shopping': [],\n  'Social': [],\n  'Newsletters': [],\n  'Notifications': [],\n  'Other': []\n};\n\n// Map messages by snippet and labels from the list\nconst totalCount = messages.length;\n\n// Since list API only returns IDs, we categorize by count\n// and note that detailed breakdown requires individual fetches\nreturn {\n  totalCount,\n  messageIds: messages.map(m => m.id),\n  today: labelMapData.today,\n  dayOfWeek: labelMapData.dayOfWeek\n};\n"
+      },
+      "id": "extract-categorize",
+      "name": "Extract & Categorize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build a Discord embed for the daily digest\nconst data = $input.first().json;\nconst total = data.totalCount;\n\n// Color coding based on volume\nlet color;\nif (total <= 10) {\n  color = 3066993; // green\n} else if (total <= 30) {\n  color = 16776960; // yellow\n} else {\n  color = 15158332; // red\n}\n\nconst embed = {\n  embeds: [\n    {\n      title: `\\u{1f4ec} Daily Email Digest — ${data.dayOfWeek}, ${data.today}`,\n      description: `Processed **${total}** email${total !== 1 ? 's' : ''} today.`,\n      color: color,\n      fields: [\n        {\n          name: 'Total Processed',\n          value: `${total} email${total !== 1 ? 's' : ''}`,\n          inline: true\n        }\n      ],\n      footer: {\n        text: 'n8n Email Classifier • Daily Digest'\n      },\n      timestamp: new Date().toISOString()\n    }\n  ]\n};\n\nreturn embed;\n"
+      },
+      "id": "build-discord-embed",
+      "name": "Build Discord Embed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No emails processed today — quiet day message\nconst dateInfo = $('Build Label Map').first().json;\n\nreturn {\n  embeds: [\n    {\n      title: `\\u{1f4ec} Daily Email Digest — ${dateInfo.dayOfWeek}, ${dateInfo.today}`,\n      description: 'No emails were processed today. Quiet day! \\u{2615}',\n      color: 3066993,\n      footer: {\n        text: 'n8n Email Classifier • Daily Digest'\n      },\n      timestamp: new Date().toISOString()\n    }\n  ]\n};\n"
+      },
+      "id": "quiet-day-message",
+      "name": "Quiet Day Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-to-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Compute Date Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Compute Date Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Date Range": {
+      "main": [
+        [
+          {
+            "node": "Fetch Labels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Labels": {
+      "main": [
+        [
+          {
+            "node": "Build Label Map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Label Map": {
+      "main": [
+        [
+          {
+            "node": "Get Processed Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Processed Emails": {
+      "main": [
+        [
+          {
+            "node": "Has Emails?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Emails?": {
+      "main": [
+        [
+          {
+            "node": "Extract & Categorize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Quiet Day Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Categorize": {
+      "main": [
+        [
+          {
+            "node": "Build Discord Embed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Discord Embed": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quiet Day Message": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-29T00:00:00.000Z",
+  "versionId": "1"
+}
