@@ -74,7 +74,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst messages = response.messages || [];\n\nif (messages.length === 0) {\n  return [{ json: { done: true, ids: [] } }];\n}\n\nconst ids = messages.map(m => m.id);\nreturn [{ json: { done: false, ids } }];\n"
+        "jsCode": "const response = $input.first().json;\nconst messages = response.messages || [];\nconst staticData = $getWorkflowStaticData('global');\nconst labelId = staticData.processedLabelId;\n\nif (messages.length === 0) {\n  return [{ json: { done: true, ids: [], labelId } }];\n}\n\nconst ids = messages.map(m => m.id);\nreturn [{ json: { done: false, ids, labelId } }];\n"
       },
       "id": "collect-ids",
       "name": "Collect IDs",
@@ -117,7 +117,7 @@
         "nodeCredentialType": "gmailOAuth2",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids) }},\n  \"removeLabelIds\": [\"{{ $getWorkflowStaticData('global').processedLabelId }}\"]\n}",
+        "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids) }},\n  \"removeLabelIds\": [\"{{ $json.labelId }}\"]\n}",
         "options": { "response": { "response": { "neverError": true, "responseFormat": "text" } } }
       },
       "id": "batch-remove",
