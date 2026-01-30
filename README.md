@@ -65,6 +65,10 @@ Global error handler that sends a Discord alert when any workflow fails.
 **Workflows:**
 - `error-notification.json` — Error trigger → Discord webhook
 
+## Roadmap
+
+See [docs/roadmap.md](docs/roadmap.md) for planned workflows across 4 waves: email snooze, morning briefings, expense tracking, newsletter summarization, server monitoring, and more.
+
 ## Infrastructure
 
 ### Deployment
