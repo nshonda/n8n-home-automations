@@ -40,11 +40,14 @@ Automatically collects monthly invoices from Husky and Deel, then sends them to 
 
 ### Daily Digest
 
-Sends a daily Discord message summarizing all emails processed by the Email Classifier.
+Sends a daily Discord embed summarizing all emails processed by the Email Classifier, with full per-email detail.
 
 - Runs at midnight (or manually triggered)
-- Color-coded embed: green (light day), yellow (moderate), red (heavy)
-- Shows total processed email count
+- Fetches each email's subject, sender, and labels via Gmail API
+- Category breakdown with emoji tags (`Finance`, `Work`, `Shopping`, etc.)
+- Urgent and action-needed emails listed individually
+- Full email listing across multiple Discord embeds when volume is high
+- Color-coded embed: green (no urgent), yellow (1–2 urgent), red (3+ urgent)
 - Quiet day message when no emails were processed
 
 **Workflows:**
