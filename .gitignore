@@ -1,7 +1,7 @@
 # Local settings
 .claude/
 .env
-_context/
+_research/
 
 # OS files
 .DS_Store
