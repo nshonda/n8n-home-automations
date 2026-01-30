@@ -1,5 +1,5 @@
 {
-  "name": "Cleanup Old Unread Emails (Run Once)",
+  "name": "Recovery: Untrash All Emails (Run Once)",
   "nodes": [
     {
       "parameters": {},
@@ -11,7 +11,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.totalTrashed = 0;\nstaticData.batchCount = 0;\nreturn [{ json: { start: true } }];\n"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.totalRestored = 0;\nstaticData.batchCount = 0;\nreturn [{ json: { start: true } }];\n"
       },
       "id": "init",
       "name": "Init",
@@ -30,7 +30,7 @@
           "parameters": [
             {
               "name": "q",
-              "value": "is:unread older_than:2y"
+              "value": "in:trash"
             },
             {
               "name": "maxResults",
@@ -40,8 +40,8 @@
         },
         "options": {}
       },
-      "id": "list-emails",
-      "name": "List Old Unread",
+      "id": "list-trashed",
+      "name": "List Trashed",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [640, 300],
@@ -81,7 +81,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{ json: {\n  message: 'Cleanup complete!',\n  totalTrashed: staticData.totalTrashed || 0,\n  batchesRun: staticData.batchCount || 0\n} }];\n"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{ json: {\n  message: 'All emails restored from trash!',\n  totalRestored: staticData.totalRestored || 0,\n  batchesRun: staticData.batchCount || 0\n} }];\n"
       },
       "id": "done",
       "name": "Done!",
@@ -97,11 +97,11 @@
         "nodeCredentialType": "gmailOAuth2",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids) }},\n  \"addLabelIds\": [\"TRASH\"],\n  \"removeLabelIds\": [\"INBOX\", \"UNREAD\"]\n}",
+        "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids) }},\n  \"addLabelIds\": [\"INBOX\"],\n  \"removeLabelIds\": [\"TRASH\"]\n}",
         "options": {}
       },
-      "id": "batch-trash",
-      "name": "Batch Trash",
+      "id": "batch-untrash",
+      "name": "Batch Untrash",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [1260, 400],
@@ -117,7 +117,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst ids = $('Collect IDs').first().json.ids || [];\nstaticData.totalTrashed = (staticData.totalTrashed || 0) + ids.length;\nstaticData.batchCount = (staticData.batchCount || 0) + 1;\nreturn [{ json: {\n  batch: staticData.batchCount,\n  trashed: ids.length,\n  totalTrashed: staticData.totalTrashed\n} }];\n"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst ids = $('Collect IDs').first().json.ids || [];\nstaticData.totalRestored = (staticData.totalRestored || 0) + ids.length;\nstaticData.batchCount = (staticData.batchCount || 0) + 1;\nreturn [{ json: {\n  batch: staticData.batchCount,\n  restored: ids.length,\n  totalRestored: staticData.totalRestored\n} }];\n"
       },
       "id": "batch-done",
       "name": "Batch Complete",
@@ -141,9 +141,9 @@
       "main": [[ { "node": "Init", "type": "main", "index": 0 } ]]
     },
     "Init": {
-      "main": [[ { "node": "List Old Unread", "type": "main", "index": 0 } ]]
+      "main": [[ { "node": "List Trashed", "type": "main", "index": 0 } ]]
     },
-    "List Old Unread": {
+    "List Trashed": {
       "main": [[ { "node": "Collect IDs", "type": "main", "index": 0 } ]]
     },
     "Collect IDs": {
@@ -152,22 +152,22 @@
     "All Done?": {
       "main": [
         [ { "node": "Done!", "type": "main", "index": 0 } ],
-        [ { "node": "Batch Trash", "type": "main", "index": 0 } ]
+        [ { "node": "Batch Untrash", "type": "main", "index": 0 } ]
       ]
     },
-    "Batch Trash": {
+    "Batch Untrash": {
       "main": [[ { "node": "Batch Complete", "type": "main", "index": 0 } ]]
     },
     "Batch Complete": {
       "main": [[ { "node": "Delay 1s", "type": "main", "index": 0 } ]]
     },
     "Delay 1s": {
-      "main": [[ { "node": "List Old Unread", "type": "main", "index": 0 } ]]
+      "main": [[ { "node": "List Trashed", "type": "main", "index": 0 } ]]
     }
   },
   "settings": { "executionOrder": "v1" },
   "staticData": null,
-  "tags": [{ "name": "email" }, { "name": "cleanup" }],
+  "tags": [{ "name": "email" }, { "name": "recovery" }],
   "triggerCount": 0,
   "pinData": {}
 }
