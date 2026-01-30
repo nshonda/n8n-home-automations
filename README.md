@@ -55,6 +55,16 @@ Sends a daily Discord embed summarizing all emails processed by the Email Classi
 
 **Docs:** [Daily Digest Setup](docs/daily-digest-setup.md)
 
+### Error Notifications
+
+Global error handler that sends a Discord alert when any workflow fails.
+
+- Red embed with workflow name, failed node, error message, and execution ID
+- Set as the instance-level error workflow in Settings → Error Workflow
+
+**Workflows:**
+- `error-notification.json` — Error trigger → Discord webhook
+
 ## Infrastructure
 
 ### Deployment

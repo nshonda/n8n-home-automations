@@ -1,0 +1,53 @@
+{
+  "name": "Error Notification (Global Error Handler)",
+  "nodes": [
+    {
+      "parameters": {
+        "events": ["workflow.failedExecution"]
+      },
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.first().json;\n\nconst workflowName = error.workflow?.name || 'Unknown Workflow';\nconst workflowId = error.workflow?.id || '';\nconst errorMessage = error.execution?.error?.message || 'No error message';\nconst nodeName = error.execution?.lastNodeExecuted || 'Unknown Node';\nconst executionId = error.execution?.id || '';\nconst timestamp = new Date().toISOString();\n\nconst embed = {\n  embeds: [\n    {\n      title: '\\u26a0\\ufe0f Workflow Error',\n      color: 15548997,\n      fields: [\n        { name: 'Workflow', value: workflowName, inline: true },\n        { name: 'Node', value: nodeName, inline: true },\n        { name: 'Execution ID', value: executionId || 'N/A', inline: true },\n        { name: 'Error', value: errorMessage.substring(0, 1024) }\n      ],\n      timestamp: timestamp,\n      footer: { text: 'n8n Error Handler' }\n    }\n  ]\n};\n\nreturn [{ json: embed }];\n"
+      },
+      "id": "format-error",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/PASTE_YOUR_WEBHOOK_URL_HERE",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[ { "node": "Format Error", "type": "main", "index": 0 } ]]
+    },
+    "Format Error": {
+      "main": [[ { "node": "Send to Discord", "type": "main", "index": 0 } ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "system" }, { "name": "monitoring" }],
+  "triggerCount": 1,
+  "pinData": {}
+}
