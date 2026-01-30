@@ -80,7 +80,7 @@
             },
             {
               "name": "maxResults",
-              "value": "100"
+              "value": "500"
             }
           ]
         },
@@ -118,23 +118,53 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract message IDs and fetch details for each\nconst messages = $('Get Processed Emails').first().json.messages || [];\nconst labelMapData = $('Build Label Map').first().json;\nconst labelMap = labelMapData.labelMap;\n\n// We have message IDs; categorize based on labels\n// For the digest, we'll use the message list metadata\nconst categories = {\n  'Priority/Urgent': [],\n  'Priority/Important': [],\n  'Action Needed': [],\n  'Finance': [],\n  'Shopping': [],\n  'Social': [],\n  'Newsletters': [],\n  'Notifications': [],\n  'Other': []\n};\n\n// Map messages by snippet and labels from the list\nconst totalCount = messages.length;\n\n// Since list API only returns IDs, we categorize by count\n// and note that detailed breakdown requires individual fetches\nreturn {\n  totalCount,\n  messageIds: messages.map(m => m.id),\n  today: labelMapData.today,\n  dayOfWeek: labelMapData.dayOfWeek\n};\n"
+        "jsCode": "// Split message list into individual items for fetching details\n// The messages.list API only returns IDs, so each must be fetched separately\nconst messages = $('Get Processed Emails').first().json.messages || [];\nconst labelMapData = $('Build Label Map').first().json;\n\nreturn messages.map(m => ({ json: {\n  messageId: m.id,\n  threadId: m.threadId\n}}));\n"
       },
-      "id": "extract-categorize",
-      "name": "Extract & Categorize",
+      "id": "split-message-ids",
+      "name": "Split Message IDs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1560, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Build a Discord embed for the daily digest\nconst data = $input.first().json;\nconst total = data.totalCount;\n\n// Color coding based on volume\nlet color;\nif (total <= 10) {\n  color = 3066993; // green\n} else if (total <= 30) {\n  color = 16776960; // yellow\n} else {\n  color = 15158332; // red\n}\n\nconst embed = {\n  embeds: [\n    {\n      title: `\\u{1f4ec} Daily Email Digest — ${data.dayOfWeek}, ${data.today}`,\n      description: `Processed **${total}** email${total !== 1 ? 's' : ''} today.`,\n      color: color,\n      fields: [\n        {\n          name: 'Total Processed',\n          value: `${total} email${total !== 1 ? 's' : ''}`,\n          inline: true\n        }\n      ],\n      footer: {\n        text: 'n8n Email Classifier • Daily Digest'\n      },\n      timestamp: new Date().toISOString()\n    }\n  ]\n};\n\nreturn embed;\n"
+        "method": "GET",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}?format=metadata&metadataHeaders=From&metadataHeaders=Subject",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "fetch-message-details",
+      "name": "Fetch Message Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all fetched messages into categorized digest data\nconst items = $input.all();\nconst labelMapData = $('Build Label Map').first().json;\nconst labelMap = labelMapData.labelMap;\nconst today = labelMapData.today;\nconst dayOfWeek = labelMapData.dayOfWeek;\n\n// System labels to ignore when categorizing\nconst systemLabels = new Set([\n  'INBOX', 'UNREAD', 'SENT', 'DRAFT', 'SPAM',\n  'TRASH', 'STARRED', 'IMPORTANT', 'CATEGORY_PERSONAL',\n  'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES',\n  'CATEGORY_FORUMS'\n]);\n\nconst categories = {};\nconst urgentEmails = [];\nconst actionEmails = [];\nconst allEmails = [];\n\nfor (const item of items) {\n  const msg = item.json;\n  const headers = msg.payload?.headers || [];\n  const subject = headers.find(h => h.name === 'Subject')?.value || '(no subject)';\n  const from = headers.find(h => h.name === 'From')?.value || 'unknown';\n\n  // Clean sender: \"Name <email>\" -> \"Name\"\n  const senderName = from.replace(/<[^>]+>/, '').replace(/\"/g, '').trim() || from;\n\n  // Resolve label IDs to names\n  const labelNames = (msg.labelIds || [])\n    .map(id => labelMap[id] || id)\n    .filter(name => !systemLabels.has(name));\n\n  // Extract category labels (#Category)\n  const cats = labelNames.filter(l => l.startsWith('#')).map(l => l.replace(/^#/, ''));\n  // Extract priority labels (!Priority/Level)\n  const priorities = labelNames.filter(l => l.startsWith('!Priority/'));\n  // Extract action labels (@Action/Type)\n  const actions = labelNames.filter(l => l.startsWith('@Action/'));\n\n  const emailEntry = { subject, senderName, cats, priorities, actions };\n  allEmails.push(emailEntry);\n\n  // Count by category\n  if (cats.length === 0) cats.push('Uncategorized');\n  for (const cat of cats) {\n    categories[cat] = (categories[cat] || 0) + 1;\n  }\n\n  // Collect urgent and action-needed emails\n  if (priorities.some(p => p.includes('Urgent'))) {\n    urgentEmails.push(emailEntry);\n  }\n  if (actions.length > 0) {\n    actionEmails.push(emailEntry);\n  }\n}\n\n// Sort categories by count descending\nconst sortedCategories = Object.entries(categories)\n  .sort((a, b) => b[1] - a[1]);\n\nreturn {\n  totalCount: allEmails.length,\n  sortedCategories,\n  urgentEmails: urgentEmails.slice(0, 10),\n  actionEmails: actionEmails.slice(0, 10),\n  allEmails,\n  today,\n  dayOfWeek\n};\n"
+      },
+      "id": "aggregate-categorize",
+      "name": "Aggregate & Categorize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build rich Discord embeds with full digest breakdown\n// Discord limits: 1024 chars per field, 6000 chars per embed, 10 embeds per message\nconst d = $input.first().json;\nconst total = d.totalCount;\n\n// Color coding: green (calm), yellow (some urgent), red (many urgent)\nlet color;\nif (d.urgentEmails.length === 0) {\n  color = 3066993; // green\n} else if (d.urgentEmails.length <= 2) {\n  color = 16776960; // yellow\n} else {\n  color = 15158332; // red\n}\n\n// Category emoji mapping\nconst catEmoji = {\n  'Finance': '\\u{1f4b0}', 'Work': '\\u{1f4bc}', 'Shopping': '\\u{1f6d2}',\n  'Travel': '\\u{2708}\\u{fe0f}', 'Newsletters': '\\u{1f4f0}', 'Notifications': '\\u{1f514}',\n  'Social': '\\u{1f465}', 'Receipts': '\\u{1f9fe}', 'Security': '\\u{1f512}',\n  'Personal': '\\u{1f4ac}', 'Other': '\\u{1f4c2}', 'Uncategorized': '\\u{2753}'\n};\n\n// Build category breakdown\nconst categoryLines = d.sortedCategories\n  .map(([cat, count]) => `${catEmoji[cat] || '\\u{1f4c1}'} **${cat}**: ${count}`)\n  .join('\\n');\n\n// Build urgent section\nconst urgentLines = d.urgentEmails.length > 0\n  ? d.urgentEmails.map(e => `\\u{2022} **${e.subject}**\\n  \\u{2514} _${e.senderName}_`).join('\\n')\n  : '';\n\n// Build action needed section\nconst actionLines = d.actionEmails.length > 0\n  ? d.actionEmails.map(e => {\n      const actionType = e.actions.map(a => a.replace('@Action/', '')).join(', ');\n      return `\\u{2022} **${actionType}**: ${e.subject}\\n  \\u{2514} _${e.senderName}_`;\n    }).join('\\n')\n  : '';\n\n// Build ALL email lines (not just 15)\nconst allEmailLines = d.allEmails.map(e => {\n  const catTag = e.cats[0] || 'Other';\n  return `\\u{2022} [${catTag}] **${e.subject}**\\n  \\u{2514} _${e.senderName}_`;\n});\n\n// --- Main embed: summary + categories + urgent + actions ---\nconst mainFields = [\n  {\n    name: `\\u{1f4ca} Total Processed`,\n    value: `**${total}** email${total !== 1 ? 's' : ''}`,\n    inline: true\n  },\n  {\n    name: `\\u{1f4c1} By Category`,\n    value: (categoryLines || '_None_').substring(0, 1024),\n    inline: false\n  }\n];\n\nif (urgentLines) {\n  mainFields.push({\n    name: `\\u{1f534} Urgent`,\n    value: urgentLines.substring(0, 1024),\n    inline: false\n  });\n}\n\nif (actionLines) {\n  mainFields.push({\n    name: `\\u{26a1} Action Needed`,\n    value: actionLines.substring(0, 1024),\n    inline: false\n  });\n}\n\nconst embeds = [{\n  title: `\\u{1f4ec} Daily Email Digest \\u{2014} ${d.dayOfWeek}, ${d.today}`,\n  color,\n  fields: mainFields\n}];\n\n// --- Email listing embeds: chunk into 1024-char fields, multiple embeds if needed ---\n// Each field can hold 1024 chars; each embed can hold ~6000 chars / 25 fields\n// We use multiple fields per embed and multiple embeds if needed\nconst chunks = [];\nlet currentChunk = '';\nfor (const line of allEmailLines) {\n  // +1 for the newline separator\n  if (currentChunk.length + line.length + 1 > 1024) {\n    chunks.push(currentChunk);\n    currentChunk = line;\n  } else {\n    currentChunk += (currentChunk ? '\\n' : '') + line;\n  }\n}\nif (currentChunk) chunks.push(currentChunk);\n\n// Pack chunks into embeds (max 25 fields per embed, max 10 embeds total)\nlet fieldCount = 0;\nlet embedIdx = 0;\nfor (let i = 0; i < chunks.length; i++) {\n  const fieldName = i === 0 ? `\\u{1f4e8} All Emails (${total})` : '\\u{200b}';\n\n  // If adding to main embed and it still has room\n  if (embedIdx === 0 && embeds[0].fields.length < 25) {\n    embeds[0].fields.push({ name: fieldName, value: chunks[i], inline: false });\n  } else {\n    // Need a continuation embed\n    if (!embeds[embedIdx] || embeds[embedIdx].fields?.length >= 25) {\n      embedIdx = embeds.length;\n      if (embeds.length >= 10) break; // Discord max 10 embeds\n      embeds.push({ color, fields: [] });\n    }\n    embeds[embedIdx].fields.push({ name: fieldName, value: chunks[i], inline: false });\n  }\n}\n\n// Add footer to the last embed\nembeds[embeds.length - 1].footer = {\n  text: 'n8n Email Classifier \\u{2022} Daily Digest'\n};\nembeds[embeds.length - 1].timestamp = new Date().toISOString();\n\nreturn { embeds };\n"
       },
       "id": "build-discord-embed",
       "name": "Build Discord Embed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1780, 300]
+      "position": [2220, 300]
     },
     {
       "parameters": {
@@ -159,7 +189,7 @@
       "name": "Send to Discord",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2000, 400]
+      "position": [2440, 400]
     }
   ],
   "connections": {
@@ -233,7 +263,7 @@
       "main": [
         [
           {
-            "node": "Extract & Categorize",
+            "node": "Split Message IDs",
             "type": "main",
             "index": 0
           }
@@ -247,7 +277,29 @@
         ]
       ]
     },
-    "Extract & Categorize": {
+    "Split Message IDs": {
+      "main": [
+        [
+          {
+            "node": "Fetch Message Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Message Details": {
+      "main": [
+        [
+          {
+            "node": "Aggregate & Categorize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate & Categorize": {
       "main": [
         [
           {
