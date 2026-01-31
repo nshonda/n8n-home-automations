@@ -2,27 +2,6 @@
 
 How to deploy, update, and manage workflows via the n8n REST API.
 
-## Best Practices
-
-### Credentials
-
-- Workflow JSON files in this repo use **placeholder IDs** (`GMAIL_CREDENTIAL_ID`, `ANTHROPIC_CREDENTIAL_ID`) — never commit real credential IDs to git
-- When updating a workflow via the API, the payload **overwrites** all node data including credentials — always fetch the current workflow first to preserve real credential IDs, or replace placeholders after import
-- The n8n API does **not** support `GET /api/v1/credentials` — you cannot list or discover credentials via the API; find real IDs by inspecting a working workflow
-- Set credentials once via the API with real IDs, then avoid overwriting them in future updates unless you include the real IDs in the payload
-
-### Workflow Updates
-
-- Always include `name`, `nodes`, `connections`, and `settings` in PUT requests — missing fields will be cleared
-- The `settings` field must only contain known properties (e.g. `executionOrder`) — extra properties from the server (like `saveManualExecutions`) cause a 400 error; when in doubt, use `{"executionOrder": "v1"}`
-- To safely update a workflow without touching credentials: fetch it from the API first, modify what you need, and PUT it back
-
-### Gmail API Specifics
-
-- `batchModify` returns 204 No Content — n8n's HTTP Request node will fail with "Invalid JSON in response body" unless you set `responseFormat: "text"` with `neverError: true` in the node's response options
-- Use `batchModify` over individual message calls — it handles up to 1000 messages per request and avoids rate limiting
-- When looping with `batchModify`, add a 1s delay between batches to stay within Gmail quotas
-
 ## API Key Setup
 
 Store your n8n API key on the server:
@@ -36,7 +15,7 @@ Generate the key in n8n: Settings → API → Create API Key.
 
 ## Finding Credential IDs
 
-Inspect a working workflow to find real credential IDs:
+Workflow JSON files in this repo use placeholder IDs (`GMAIL_CREDENTIAL_ID`, `ANTHROPIC_CREDENTIAL_ID`). You need real credential IDs to deploy. The n8n API does not support listing credentials, so inspect a working workflow instead:
 
 ```bash
 API_KEY=$(cat ~/.n8n-api-key)
@@ -52,6 +31,8 @@ for node in wf.get('nodes', []):
 "
 ```
 
+Never commit real credential IDs to git.
+
 ## Importing a New Workflow
 
 ```bash
@@ -62,9 +43,13 @@ curl -s -X POST "http://localhost:5678/api/v1/workflows" \
   -d @workflows/my-workflow.json
 ```
 
-The response includes the new workflow's `id` — save it for future updates.
+The response includes the new workflow's `id` — save it for future updates. After importing, fix the credential placeholders (see below).
 
 ## Updating an Existing Workflow
+
+PUT requests must include `name`, `nodes`, `connections`, and `settings` — missing fields will be cleared. The `settings` field must only contain known properties (e.g. `executionOrder`); extra properties from the server cause a 400 error.
+
+**Important:** The payload overwrites all node data including credentials. Either fetch the workflow first to preserve real credential IDs, or replace placeholders after updating.
 
 ```bash
 API_KEY=$(cat ~/.n8n-api-key)
@@ -87,7 +72,7 @@ print(payload)
 
 ## Fixing Credentials After Import
 
-After importing via API, replace placeholder credential IDs with real ones:
+Replace placeholder credential IDs with real ones:
 
 ```bash
 python3 -c "
@@ -141,3 +126,9 @@ curl -s -X PATCH "http://localhost:5678/api/v1/workflows/<WORKFLOW_ID>/activate"
 curl -s -X PATCH "http://localhost:5678/api/v1/workflows/<WORKFLOW_ID>/deactivate" \
   -H "X-N8N-API-KEY: $API_KEY"
 ```
+
+## Gmail batchModify Notes
+
+- `batchModify` returns 204 No Content — n8n's HTTP Request node will fail with "Invalid JSON in response body" unless you set `responseFormat: "text"` with `neverError: true` in the node's response options
+- Use `batchModify` over individual message calls — handles up to 1000 messages per request and avoids rate limiting
+- Add a 1s delay between batches when looping to stay within Gmail quotas
