@@ -1,0 +1,364 @@
+{
+  "name": "Toggl → Jira/Tempo Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "triggerAtDay": 28, "triggerAtHour": 17 },
+            { "triggerAtDay": 29, "triggerAtHour": 17 },
+            { "triggerAtDay": 30, "triggerAtHour": 17 },
+            { "triggerAtDay": 31, "triggerAtHour": 17 }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst year = now.getFullYear();\nconst month = now.getMonth();\n\nconst lastDay = new Date(year, month + 1, 0);\nlet lastWeekday = new Date(lastDay);\nwhile (lastWeekday.getDay() === 0 || lastWeekday.getDay() === 6) {\n  lastWeekday.setDate(lastWeekday.getDate() - 1);\n}\n\nconst today = now.toISOString().split('T')[0];\nconst lastWeekdayStr = lastWeekday.toISOString().split('T')[0];\nconst isManual = $execution.mode === 'manual' || $execution.mode === 'test';\n\nif (!isManual && today !== lastWeekdayStr) {\n  return [];\n}\n\nconst startDate = new Date(now);\nstartDate.setDate(startDate.getDate() - 33);\nconst endDate = new Date(now);\nendDate.setDate(endDate.getDate() + 2);\n\nreturn [{\n  json: {\n    startDate: startDate.toISOString().split('T')[0],\n    endDate: endDate.toISOString().split('T')[0],\n    today,\n    lastWeekday: lastWeekdayStr,\n    isManual\n  }\n}];\n"
+      },
+      "id": "check-last-weekday",
+      "name": "Check Last Weekday",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.track.toggl.com/api/v9/me/time_entries",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "start_date", "value": "={{ $json.startDate }}" },
+            { "name": "end_date", "value": "={{ $json.endDate }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-toggl-entries",
+      "name": "Fetch Toggl Entries",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 400],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "TOGGL_CREDENTIAL_ID",
+          "name": "Toggl Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawInput = $input.all();\nconst entries = rawInput.map(i => i.json);\nconst filtered = [];\n\nfor (const item of entries) {\n  const tags = item.tags || [];\n  if (tags.includes('in-jira')) continue;\n  if (!item.duration || item.duration <= 0) continue;\n\n  const description = item.description || '';\n  const match = description.match(/^([a-zA-Z0-9]+)-(\\d+)/);\n  if (!match) continue;\n\n  const dateStr = DateTime.fromISO(item.start).setZone('America/Los_Angeles').toFormat('yyyy-MM-dd');\n\n  filtered.push({\n    json: {\n      ticket_number: match[0],\n      description,\n      date: dateStr,\n      duration: item.duration,\n      start: item.start,\n      stop: item.stop,\n      toggl_id: item.id,\n      tags: JSON.stringify(tags),\n      workspace_id: item.workspace_id\n    }\n  });\n}\n\n// Store entries in workflow static data keyed by toggl_id\nconst staticData = $getWorkflowStaticData('global');\nstaticData.pendingEntries = {};\nstaticData.entryOrder = [];\nfor (const f of filtered) {\n  staticData.pendingEntries[f.json.toggl_id] = { ...f.json };\n  staticData.entryOrder.push(f.json.toggl_id);\n}\n\nif (filtered.length === 0) {\n  return [{ json: { _empty: true, message: 'No entries to sync' } }];\n}\n\nreturn filtered;\n"
+      },
+      "id": "filter-entries",
+      "name": "Filter Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "skip-empty",
+              "leftValue": "={{ $json.ticket_number }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "skip-if-empty",
+      "name": "Skip If Empty",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.JIRA_BASE_URL + '/rest/api/3/issue/' + $json.ticket_number }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "get-jira-issue-id",
+      "name": "Get Jira Issue ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "JIRA_CREDENTIAL_ID",
+          "name": "Jira Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Restore entry data from static data, merge with Jira issue ID\nconst staticData = $getWorkflowStaticData('global');\nconst entries = staticData.pendingEntries;\nconst order = staticData.entryOrder;\nconst jiraItems = $input.all();\nconst results = [];\n\nfor (let i = 0; i < jiraItems.length; i++) {\n  const togglId = order[i];\n  const entry = entries[togglId];\n  const issueId = Number(jiraItems[i].json.id);\n  // Store issueId back in static data\n  entry.issueId = issueId;\n  results.push({\n    json: {\n      ...entry,\n      issueId\n    }\n  });\n}\n\nreturn results;\n"
+      },
+      "id": "prepare-tempo",
+      "name": "Prepare Tempo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.tempo.io/4/worklogs?from={{ $json.date }}&to={{ $json.date }}&issue[]={{ $json.issueId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "check-existing-worklog",
+      "name": "Check Existing Worklog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TEMPO_CREDENTIAL_ID",
+          "name": "Tempo Bearer Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Restore entry data, check Tempo response, mark duplicates\nconst staticData = $getWorkflowStaticData('global');\nconst entries = staticData.pendingEntries;\nconst order = staticData.entryOrder;\nconst tempoItems = $input.all();\nconst results = [];\n\nfor (let i = 0; i < tempoItems.length; i++) {\n  const togglId = order[i];\n  const entry = entries[togglId];\n  const count = tempoItems[i].json.metadata ? tempoItems[i].json.metadata.count : 0;\n  const tempoSkipped = count > 0;\n  // Store decision in static data\n  entry.tempoSkipped = tempoSkipped;\n  results.push({\n    json: {\n      ...entry,\n      tempoSkipped\n    }\n  });\n}\n\nreturn results;\n"
+      },
+      "id": "process-check",
+      "name": "Process Check Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tempo.io/4/worklogs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.tempoSkipped ? JSON.stringify({_skip: true}) : JSON.stringify({ attributes: [{ key: '_Dev_', value: 1 }], authorAccountId: $env.JIRA_ACCOUNT_ID, description: $json.description, issueId: $json.issueId, startDate: $json.date, timeSpentSeconds: $json.duration }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1000
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "log-tempo-worklog",
+      "name": "Log Tempo Worklog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TEMPO_CREDENTIAL_ID",
+          "name": "Tempo Bearer Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Restore entry data from static data for Toggl tagging\nconst staticData = $getWorkflowStaticData('global');\nconst entries = staticData.pendingEntries;\nconst order = staticData.entryOrder;\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < order.length; i++) {\n  const togglId = order[i];\n  const entry = entries[togglId];\n  results.push({\n    json: {\n      ...entry\n    }\n  });\n}\n\nreturn results;\n"
+      },
+      "id": "prepare-toggl",
+      "name": "Prepare Toggl Tag",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.track.toggl.com/api/v9/workspaces/{{ $env.TOGGL_WORKSPACE_ID }}/time_entries/{{ $json.toggl_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ description: $json.description, duration: $json.duration, start: $json.start, stop: $json.stop, project_id: Number($env.TOGGL_PROJECT_ID), billable: true, tags: JSON.parse($json.tags || '[]').concat(['in-jira']) }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1100
+            }
+          }
+        }
+      },
+      "id": "tag-toggl-entry",
+      "name": "Tag Toggl Entry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2660, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "TOGGL_CREDENTIAL_ID",
+          "name": "Toggl Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Restore entry data from static data for result collection\nconst staticData = $getWorkflowStaticData('global');\nconst entries = staticData.pendingEntries;\nconst order = staticData.entryOrder;\nconst results = [];\n\nfor (const togglId of order) {\n  const entry = entries[togglId];\n  results.push({\n    json: {\n      ticket_number: entry.ticket_number,\n      date: entry.date,\n      duration: entry.duration,\n      tempoLogged: !entry.tempoSkipped,\n      tempoSkipped: !!entry.tempoSkipped\n    }\n  });\n}\n\nreturn results;\n"
+      },
+      "id": "collect-result",
+      "name": "Collect Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst logged = [];\nconst errors = [];\n\nfor (const item of items) {\n  const d = item.json;\n  if (d._empty || d.message) continue;\n  if (d.error) {\n    errors.push(d.ticket_number + ': ' + (d.errorMessage || 'unknown'));\n  } else {\n    const suffix = d.tempoSkipped ? ' (already in Tempo)' : '';\n    logged.push(d.ticket_number + ' (' + d.date + ') - ' + (d.duration / 3600).toFixed(1) + 'h' + suffix);\n  }\n}\n\nreturn [{\n  json: {\n    summary: `Synced ${logged.length} entries` + (errors.length > 0 ? `, ${errors.length} errors` : ''),\n    logged,\n    errors,\n    timestamp: new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3100, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst logged = data.logged || [];\nconst errors = data.errors || [];\nconst total = logged.length + errors.length;\n\nlet color, status;\nif (total === 0) {\n  color = 3447003;\n  status = '\\u{1f4ed} No entries to sync';\n} else if (errors.length === 0) {\n  color = 3066993;\n  status = `\\u{2705} All ${logged.length} entries synced`;\n} else if (logged.length === 0) {\n  color = 15158332;\n  status = `\\u{274c} All ${errors.length} entries failed`;\n} else {\n  color = 16776960;\n  status = `\\u{26a0}\\u{fe0f} ${logged.length} synced, ${errors.length} errors`;\n}\n\nconst fields = [];\nif (logged.length > 0) {\n  fields.push({ name: 'Synced', value: logged.slice(0, 10).join('\\n') + (logged.length > 10 ? `\\n...and ${logged.length - 10} more` : ''), inline: false });\n}\nif (errors.length > 0) {\n  fields.push({ name: 'Errors', value: errors.slice(0, 10).join('\\n'), inline: false });\n}\n\nreturn [{\n  json: {\n    embeds: [{\n      title: '\\u{1f504} Toggl \\u2192 Jira/Tempo Sync',\n      description: status,\n      color,\n      fields,\n      footer: { text: 'n8n Toggl Sync' },\n      timestamp: data.timestamp\n    }]\n  }\n}];\n"
+      },
+      "id": "build-discord-embed",
+      "name": "Build Discord Embed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-to-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [3540, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[ { "node": "Check Last Weekday", "type": "main", "index": 0 } ]]
+    },
+    "Manual Trigger": {
+      "main": [[ { "node": "Check Last Weekday", "type": "main", "index": 0 } ]]
+    },
+    "Check Last Weekday": {
+      "main": [[ { "node": "Fetch Toggl Entries", "type": "main", "index": 0 } ]]
+    },
+    "Fetch Toggl Entries": {
+      "main": [[ { "node": "Filter Entries", "type": "main", "index": 0 } ]]
+    },
+    "Filter Entries": {
+      "main": [[ { "node": "Skip If Empty", "type": "main", "index": 0 } ]]
+    },
+    "Skip If Empty": {
+      "main": [
+        [ { "node": "Get Jira Issue ID", "type": "main", "index": 0 } ],
+        [ { "node": "Summary", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Get Jira Issue ID": {
+      "main": [[ { "node": "Prepare Tempo", "type": "main", "index": 0 } ]]
+    },
+    "Prepare Tempo": {
+      "main": [[ { "node": "Check Existing Worklog", "type": "main", "index": 0 } ]]
+    },
+    "Check Existing Worklog": {
+      "main": [[ { "node": "Process Check Results", "type": "main", "index": 0 } ]]
+    },
+    "Process Check Results": {
+      "main": [[ { "node": "Log Tempo Worklog", "type": "main", "index": 0 } ]]
+    },
+    "Log Tempo Worklog": {
+      "main": [[ { "node": "Prepare Toggl Tag", "type": "main", "index": 0 } ]]
+    },
+    "Prepare Toggl Tag": {
+      "main": [[ { "node": "Tag Toggl Entry", "type": "main", "index": 0 } ]]
+    },
+    "Tag Toggl Entry": {
+      "main": [[ { "node": "Collect Result", "type": "main", "index": 0 } ]]
+    },
+    "Collect Result": {
+      "main": [[ { "node": "Summary", "type": "main", "index": 0 } ]]
+    },
+    "Summary": {
+      "main": [[ { "node": "Build Discord Embed", "type": "main", "index": 0 } ]]
+    },
+    "Build Discord Embed": {
+      "main": [[ { "node": "Send to Discord", "type": "main", "index": 0 } ]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 300,
+    "timezone": "America/Los_Angeles"
+  },
+  "staticData": null,
+  "tags": [{ "name": "productivity" }, { "name": "time-tracking" }],
+  "triggerCount": 2,
+  "pinData": {}
+}

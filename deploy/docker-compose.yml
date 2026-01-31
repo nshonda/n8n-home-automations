@@ -32,6 +32,16 @@ services:
       - N8N_RUNNERS_TASK_TIMEOUT=600
       - NODE_OPTIONS=--max-old-space-size=4096
 
+      # Allow workflows to access env vars via $env
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+
+      # Workflow environment variables
+      - JIRA_BASE_URL=${JIRA_BASE_URL}
+      - JIRA_ACCOUNT_ID=${JIRA_ACCOUNT_ID}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - TOGGL_PROJECT_ID=${TOGGL_PROJECT_ID}
+      - TOGGL_WORKSPACE_ID=${TOGGL_WORKSPACE_ID}
+
       # Optional: Basic auth for additional security
       # - N8N_BASIC_AUTH_ACTIVE=true
       # - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
