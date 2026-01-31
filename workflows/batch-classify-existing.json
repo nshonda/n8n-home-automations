@@ -54,7 +54,7 @@
             },
             {
               "name": "maxResults",
-              "value": "20"
+              "value": "10"
             }
           ]
         },
@@ -147,7 +147,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const email = $input.first().json;\n\nconst headers = email.payload?.headers || [];\nconst getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';\n\nconst fromHeader = getHeader('From');\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\nconst subject = getHeader('Subject') || '(no subject)';\n\nlet body = '';\nfunction extractText(part) {\n  if (part.mimeType === 'text/plain' && part.body?.data) {\n    return Buffer.from(part.body.data, 'base64').toString('utf-8');\n  }\n  if (part.parts) {\n    for (const p of part.parts) {\n      const text = extractText(p);\n      if (text) return text;\n    }\n  }\n  return '';\n}\nbody = extractText(email.payload || {});\nbody = body.replace(/<[^>]*>/g, ' ');\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\nbody = body.replace(/\\s+/g, ' ').trim();\n\n// Sanitize for safe JSON interpolation\nconst sanitize = (str) => str.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ');\n\nreturn {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject: sanitize(subject),\n  bodyPreview: sanitize(body.substring(0, 1500)),\n  snippet: email.snippet || ''\n};\n"
+        "jsCode": "const email = $input.first().json;\n\nconst headers = email.payload?.headers || [];\nconst getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';\n\nconst fromHeader = getHeader('From');\nconst senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\nconst senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\nconst senderDomain = senderEmail.split('@')[1] || '';\nconst subject = getHeader('Subject') || '(no subject)';\n\nlet body = '';\nfunction extractText(part) {\n  if (part.mimeType === 'text/plain' && part.body?.data) {\n    return Buffer.from(part.body.data, 'base64').toString('utf-8');\n  }\n  if (part.parts) {\n    for (const p of part.parts) {\n      const text = extractText(p);\n      if (text) return text;\n    }\n  }\n  return '';\n}\nbody = extractText(email.payload || {});\nbody = body.replace(/<[^>]*>/g, ' ');\nbody = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\nbody = body.replace(/\\s+/g, ' ').trim();\n\n// Sanitize for safe JSON interpolation\nconst sanitize = (str) => str.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ').replace(/\\{\\{/g, '{ {').replace(/\\}\\}/g, '} }');\n\nreturn [{ json: {\n  messageId: email.id,\n  threadId: email.threadId,\n  senderEmail,\n  senderDomain,\n  subject: sanitize(subject),\n  bodyPreview: sanitize(body.substring(0, 1500)),\n  snippet: email.snippet || ''\n} }];\n"
       },
       "id": "preprocess",
       "name": "Preprocess",
@@ -373,7 +373,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveExecutionProgress": false,
+    "saveDataSuccessExecution": "none"
   },
   "staticData": null,
   "tags": [
