@@ -57,7 +57,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build ID -> name label map (reverse of email-classifier)\nconst labelsResponse = $input.first().json;\nconst dateInfo = $('Compute Date Range').first().json;\n\nconst labelMap = {};\nfor (const l of (labelsResponse.labels || [])) {\n  labelMap[l.id] = l.name;\n}\n\nreturn {\n  labelMap,\n  ...dateInfo\n};\n"
+        "jsCode": "// Build both name→ID and ID→name label maps\nconst labelsResponse = $input.first().json;\nconst dateInfo = $('Compute Date Range').first().json;\n\nconst nameToId = {};\nconst idToName = {};\nfor (const l of (labelsResponse.labels || [])) {\n  nameToId[l.name] = l.id;\n  idToName[l.id] = l.name;\n}\n\nreturn {\n  nameToId,\n  idToName,\n  ...dateInfo\n};\n"
       },
       "id": "build-label-map",
       "name": "Build Label Map",
@@ -76,7 +76,7 @@
           "parameters": [
             {
               "name": "q",
-              "value": "label:_System/Processed newer_than:1d"
+              "value": "in:inbox newer_than:1d -label:_System/Processed"
             },
             {
               "name": "maxResults",
@@ -86,8 +86,8 @@
         },
         "options": {}
       },
-      "id": "get-processed-emails",
-      "name": "Get Processed Emails",
+      "id": "fetch-unclassified",
+      "name": "Fetch Unclassified Emails",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [1120, 400],
@@ -118,7 +118,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Split message list into individual items for fetching details\n// The messages.list API only returns IDs, so each must be fetched separately\nconst messages = $('Get Processed Emails').first().json.messages || [];\nconst labelMapData = $('Build Label Map').first().json;\n\nreturn messages.map(m => ({ json: {\n  messageId: m.id,\n  threadId: m.threadId\n}}));\n"
+        "jsCode": "// Split message list into individual items for fetching details\nconst messages = $('Fetch Unclassified Emails').first().json.messages || [];\n\nreturn messages.map(m => ({ json: {\n  messageId: m.id,\n  threadId: m.threadId\n}}));\n"
       },
       "id": "split-message-ids",
       "name": "Split Message IDs",
@@ -129,7 +129,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}?format=metadata&metadataHeaders=From&metadataHeaders=Subject",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}?format=full",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "gmailOAuth2",
         "options": {}
@@ -148,27 +148,112 @@
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate all fetched messages into categorized digest data\nconst items = $input.all();\nconst labelMapData = $('Build Label Map').first().json;\nconst labelMap = labelMapData.labelMap;\nconst today = labelMapData.today;\nconst dayOfWeek = labelMapData.dayOfWeek;\n\n// System labels to ignore when categorizing\nconst systemLabels = new Set([\n  'INBOX', 'UNREAD', 'SENT', 'DRAFT', 'SPAM',\n  'TRASH', 'STARRED', 'IMPORTANT', 'CATEGORY_PERSONAL',\n  'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES',\n  'CATEGORY_FORUMS'\n]);\n\nconst categories = {};\nconst urgentEmails = [];\nconst actionEmails = [];\nconst allEmails = [];\n\nfor (const item of items) {\n  const msg = item.json;\n  const headers = msg.payload?.headers || [];\n  const subject = headers.find(h => h.name === 'Subject')?.value || '(no subject)';\n  const from = headers.find(h => h.name === 'From')?.value || 'unknown';\n\n  // Clean sender: \"Name <email>\" -> \"Name\"\n  const senderName = from.replace(/<[^>]+>/, '').replace(/\"/g, '').trim() || from;\n\n  // Resolve label IDs to names\n  const labelNames = (msg.labelIds || [])\n    .map(id => labelMap[id] || id)\n    .filter(name => !systemLabels.has(name));\n\n  // Extract category labels (#Category)\n  const cats = labelNames.filter(l => l.startsWith('#')).map(l => l.replace(/^#/, ''));\n  // Extract priority labels (!Priority/Level)\n  const priorities = labelNames.filter(l => l.startsWith('!Priority/'));\n  // Extract action labels (@Action/Type)\n  const actions = labelNames.filter(l => l.startsWith('@Action/'));\n\n  const emailEntry = { subject, senderName, cats, priorities, actions };\n  allEmails.push(emailEntry);\n\n  // Count by category\n  if (cats.length === 0) cats.push('Uncategorized');\n  for (const cat of cats) {\n    categories[cat] = (categories[cat] || 0) + 1;\n  }\n\n  // Collect urgent and action-needed emails\n  if (priorities.some(p => p.includes('Urgent'))) {\n    urgentEmails.push(emailEntry);\n  }\n  if (actions.length > 0) {\n    actionEmails.push(emailEntry);\n  }\n}\n\n// Sort categories by count descending\nconst sortedCategories = Object.entries(categories)\n  .sort((a, b) => b[1] - a[1]);\n\nreturn {\n  totalCount: allEmails.length,\n  sortedCategories,\n  urgentEmails: urgentEmails.slice(0, 10),\n  actionEmails: actionEmails.slice(0, 10),\n  allEmails,\n  today,\n  dayOfWeek\n};\n"
+        "jsCode": "// Extract and preprocess email content for classification\nconst items = $input.all();\nconst sanitize = (str) => str.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ');\n\nreturn items.map(item => {\n  const email = item.json;\n\n  const fromHeader = email.payload?.headers?.find(h => h.name === 'From')?.value || '';\n  const senderMatch = fromHeader.match(/<([^>]+)>/) || fromHeader.match(/([\\w.+-]+@[\\w.-]+)/);\n  const senderEmail = senderMatch ? senderMatch[1].toLowerCase() : fromHeader.toLowerCase();\n  const senderDomain = senderEmail.split('@')[1] || '';\n  const senderName = fromHeader.replace(/<[^>]+>/, '').replace(/\"/g, '').trim() || fromHeader;\n\n  const subject = email.payload?.headers?.find(h => h.name === 'Subject')?.value || '(no subject)';\n\n  let body = '';\n  if (email.payload?.body?.data) {\n    body = Buffer.from(email.payload.body.data, 'base64').toString('utf-8');\n  } else if (email.payload?.parts) {\n    const textPart = email.payload.parts.find(p => p.mimeType === 'text/plain');\n    if (textPart?.body?.data) {\n      body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');\n    }\n  }\n\n  body = body.replace(/<[^>]*>/g, ' ');\n  body = body.split('\\n').filter(line => !line.trim().startsWith('>')).join('\\n');\n  body = body.replace(/\\s+/g, ' ').trim();\n\n  return {\n    messageId: email.id,\n    threadId: email.threadId,\n    senderEmail,\n    senderDomain,\n    senderName,\n    subject: sanitize(subject),\n    bodyPreview: sanitize(body.substring(0, 1500)),\n    snippet: email.snippet || '',\n    labelIds: email.labelIds || []\n  };\n});\n"
       },
-      "id": "aggregate-categorize",
-      "name": "Aggregate & Categorize",
+      "id": "preprocess",
+      "name": "Preprocess Email",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2000, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Build rich Discord embeds with full digest breakdown\n// Discord limits: 1024 chars per field, 6000 chars per embed, 10 embeds per message\nconst d = $input.first().json;\nconst total = d.totalCount;\n\n// Color coding: green (calm), yellow (some urgent), red (many urgent)\nlet color;\nif (d.urgentEmails.length === 0) {\n  color = 3066993; // green\n} else if (d.urgentEmails.length <= 2) {\n  color = 16776960; // yellow\n} else {\n  color = 15158332; // red\n}\n\n// Category emoji mapping\nconst catEmoji = {\n  'Finance': '\\u{1f4b0}', 'Work': '\\u{1f4bc}', 'Shopping': '\\u{1f6d2}',\n  'Travel': '\\u{2708}\\u{fe0f}', 'Newsletters': '\\u{1f4f0}', 'Notifications': '\\u{1f514}',\n  'Social': '\\u{1f465}', 'Receipts': '\\u{1f9fe}', 'Security': '\\u{1f512}',\n  'Personal': '\\u{1f4ac}', 'Other': '\\u{1f4c2}', 'Uncategorized': '\\u{2753}'\n};\n\n// Build category breakdown\nconst categoryLines = d.sortedCategories\n  .map(([cat, count]) => `${catEmoji[cat] || '\\u{1f4c1}'} **${cat}**: ${count}`)\n  .join('\\n');\n\n// Build urgent section\nconst urgentLines = d.urgentEmails.length > 0\n  ? d.urgentEmails.map(e => `\\u{2022} **${e.subject}**\\n  \\u{2514} _${e.senderName}_`).join('\\n')\n  : '';\n\n// Build action needed section\nconst actionLines = d.actionEmails.length > 0\n  ? d.actionEmails.map(e => {\n      const actionType = e.actions.map(a => a.replace('@Action/', '')).join(', ');\n      return `\\u{2022} **${actionType}**: ${e.subject}\\n  \\u{2514} _${e.senderName}_`;\n    }).join('\\n')\n  : '';\n\n// Build ALL email lines (not just 15)\nconst allEmailLines = d.allEmails.map(e => {\n  const catTag = e.cats[0] || 'Other';\n  return `\\u{2022} [${catTag}] **${e.subject}**\\n  \\u{2514} _${e.senderName}_`;\n});\n\n// --- Main embed: summary + categories + urgent + actions ---\nconst mainFields = [\n  {\n    name: `\\u{1f4ca} Total Processed`,\n    value: `**${total}** email${total !== 1 ? 's' : ''}`,\n    inline: true\n  },\n  {\n    name: `\\u{1f4c1} By Category`,\n    value: (categoryLines || '_None_').substring(0, 1024),\n    inline: false\n  }\n];\n\nif (urgentLines) {\n  mainFields.push({\n    name: `\\u{1f534} Urgent`,\n    value: urgentLines.substring(0, 1024),\n    inline: false\n  });\n}\n\nif (actionLines) {\n  mainFields.push({\n    name: `\\u{26a1} Action Needed`,\n    value: actionLines.substring(0, 1024),\n    inline: false\n  });\n}\n\nconst embeds = [{\n  title: `\\u{1f4ec} Daily Email Digest \\u{2014} ${d.dayOfWeek}, ${d.today}`,\n  color,\n  fields: mainFields\n}];\n\n// --- Email listing embeds: chunk into 1024-char fields, multiple embeds if needed ---\n// Each field can hold 1024 chars; each embed can hold ~6000 chars / 25 fields\n// We use multiple fields per embed and multiple embeds if needed\nconst chunks = [];\nlet currentChunk = '';\nfor (const line of allEmailLines) {\n  // +1 for the newline separator\n  if (currentChunk.length + line.length + 1 > 1024) {\n    chunks.push(currentChunk);\n    currentChunk = line;\n  } else {\n    currentChunk += (currentChunk ? '\\n' : '') + line;\n  }\n}\nif (currentChunk) chunks.push(currentChunk);\n\n// Pack chunks into embeds (max 25 fields per embed, max 10 embeds total)\nlet fieldCount = 0;\nlet embedIdx = 0;\nfor (let i = 0; i < chunks.length; i++) {\n  const fieldName = i === 0 ? `\\u{1f4e8} All Emails (${total})` : '\\u{200b}';\n\n  // If adding to main embed and it still has room\n  if (embedIdx === 0 && embeds[0].fields.length < 25) {\n    embeds[0].fields.push({ name: fieldName, value: chunks[i], inline: false });\n  } else {\n    // Need a continuation embed\n    if (!embeds[embedIdx] || embeds[embedIdx].fields?.length >= 25) {\n      embedIdx = embeds.length;\n      if (embeds.length >= 10) break; // Discord max 10 embeds\n      embeds.push({ color, fields: [] });\n    }\n    embeds[embedIdx].fields.push({ name: fieldName, value: chunks[i], inline: false });\n  }\n}\n\n// Add footer to the last embed\nembeds[embeds.length - 1].footer = {\n  text: 'n8n Email Classifier \\u{2022} Daily Digest'\n};\nembeds[embeds.length - 1].timestamp = new Date().toISOString();\n\nreturn { embeds };\n"
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. You understand emails in English and Brazilian Portuguese equally well.\\n\\nAnalyze this email and return ONLY valid JSON.\\n\\nCategories (use the most specific sub-category when applicable):\\n- Finance, Finance/Banking, Finance/Receipts, Finance/Bills, Finance/Investments\\n- Work, Work/Projects, Work/Meetings\\n- Personal, Personal/Family, Personal/Health\\n- Shopping, Shopping/Orders, Shopping/Shipping, Shopping/Deals\\n- Travel, Travel/Flights, Travel/Hotels, Travel/Reservations\\n- Notifications, Newsletters, Social, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"archive\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence in English>\\\"\\n}\\n\\nRules:\\n- Marketing/promotional with fake urgency (Last chance!, So hoje!, Ultima chance!, Aproveite!) = Newsletters, P3, archive=true, confidence>=0.90\\n- Emails from noreply@ or no-reply@ = usually P3, archive=true\\n- Emails with Unsubscribe or Cancelar inscricao = Newsletters, P3, archive=true\\n- CC'd (not To'd) = usually P3\\n- Security alerts (password reset, login attempt) = Security, P1\\n- Receipts/confirmations with no action = Finance/Receipts, P3, archive=true\\n- Bank/financial alerts = Finance/Banking, P2\\n- Order confirmations = Shopping/Orders, P3, archive=true\\n- Shipping/tracking updates = Shopping/Shipping, P3, archive=true\\n- Flight confirmations/boarding passes = Travel/Flights, P3\\n- Hotel confirmations = Travel/Hotels, P3\\n- Other travel bookings (car, tours, restaurant) = Travel/Reservations, P3\\n- Be confident: if clearly promotional or automated, set confidence >= 0.90\\n- Always return valid JSON, nothing else\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "ai-classify",
+      "name": "AI Classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst emailItems = $('Preprocess Email').all();\n\nreturn items.map((item, i) => {\n  const aiResponse = item.json;\n  const email = emailItems[i]?.json || {};\n\n  let classification;\n  try {\n    const content = aiResponse.content?.[0]?.text || '';\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      classification = JSON.parse(jsonMatch[0]);\n    } else {\n      throw new Error('No JSON found in response');\n    }\n  } catch (e) {\n    classification = {\n      category: 'Other',\n      priority: 'P2',\n      action_needed: false,\n      archive: false,\n      confidence: 0.5,\n      summary: 'Classification failed - needs review'\n    };\n  }\n\n  return { ...email, ...classification };\n});\n"
+      },
+      "id": "parse-ai",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build label names and resolve to Gmail label IDs\nconst items = $input.all();\nconst labelMapData = $('Build Label Map').first().json;\nconst nameToId = labelMapData.nameToId || {};\n\nconst categoryMap = {\n  'Finance': '#Finance',\n  'Finance/Banking': '#Finance/Banking',\n  'Finance/Receipts': '#Finance/Receipts',\n  'Finance/Bills': '#Finance/Bills',\n  'Finance/Investments': '#Finance/Investments',\n  'Work': '#Work',\n  'Work/Projects': '#Work/Projects',\n  'Work/Meetings': '#Work/Meetings',\n  'Personal': '#Personal',\n  'Personal/Family': '#Personal/Family',\n  'Personal/Health': '#Personal/Health',\n  'Shopping': '#Shopping',\n  'Shopping/Orders': '#Shopping/Orders',\n  'Shopping/Shipping': '#Shopping/Shipping',\n  'Shopping/Deals': '#Shopping/Deals',\n  'Travel': '#Travel',\n  'Travel/Flights': '#Travel/Flights',\n  'Travel/Hotels': '#Travel/Hotels',\n  'Travel/Reservations': '#Travel/Reservations',\n  'Notifications': '#Notifications',\n  'Newsletters': '#Newsletters',\n  'Social': '#Social',\n  'Receipts': '#Finance/Receipts',\n  'Security': '#Security',\n  'Other': '#Other'\n};\n\nreturn items.map(item => {\n  const email = item.json;\n  const labelNames = [];\n\n  labelNames.push(categoryMap[email.category] || '#Other');\n\n  if (email.priority === 'P1') {\n    labelNames.push('!Priority/Urgent');\n  } else if (email.priority === 'P2' && email.action_needed) {\n    labelNames.push('@Action/Review');\n  }\n\n  labelNames.push('_System/Processed');\n\n  if (email.confidence < 0.70) {\n    labelNames.push('_System/Review');\n  }\n\n  const labelIds = labelNames\n    .map(name => nameToId[name])\n    .filter(id => id != null);\n\n  return {\n    ...email,\n    labelsToAdd: labelIds,\n    labelNamesAdded: labelNames\n  };\n});\n"
+      },
+      "id": "build-labels",
+      "name": "Build Labels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/modify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"addLabelIds\": {{ JSON.stringify($json.labelsToAdd) }},\n  \"removeLabelIds\": [\"INBOX\"]\n}",
+        "options": {}
+      },
+      "id": "apply-labels-archive",
+      "name": "Apply Labels & Archive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2880, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all classified emails into digest data\n// Pull classification data from Build Labels node (has all email + classification fields)\nconst items = $('Build Labels').all();\nconst labelMapData = $('Build Label Map').first().json;\nconst today = labelMapData.today;\nconst dayOfWeek = labelMapData.dayOfWeek;\n\nconst categories = {};\nconst urgentEmails = [];\nconst actionEmails = [];\nconst allEmails = [];\n\nfor (const item of items) {\n  const email = item.json;\n  const cat = email.category || 'Other';\n  const senderName = email.senderName || email.senderEmail || 'unknown';\n\n  const emailEntry = {\n    subject: email.subject,\n    senderName,\n    cats: [cat],\n    priorities: email.priority === 'P1' ? ['!Priority/Urgent'] : [],\n    actions: email.action_needed ? ['@Action/Review'] : [],\n    summary: email.summary || ''\n  };\n  allEmails.push(emailEntry);\n\n  categories[cat] = (categories[cat] || 0) + 1;\n\n  if (email.priority === 'P1') {\n    urgentEmails.push(emailEntry);\n  }\n  if (email.action_needed) {\n    actionEmails.push(emailEntry);\n  }\n}\n\nconst sortedCategories = Object.entries(categories)\n  .sort((a, b) => b[1] - a[1]);\n\nreturn {\n  totalCount: allEmails.length,\n  sortedCategories,\n  urgentEmails: urgentEmails.slice(0, 10),\n  actionEmails: actionEmails.slice(0, 10),\n  allEmails,\n  today,\n  dayOfWeek\n};\n"
+      },
+      "id": "aggregate-categorize",
+      "name": "Aggregate & Categorize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build rich Discord embeds with full digest breakdown\nconst d = $input.first().json;\nconst total = d.totalCount;\n\nlet color;\nif (d.urgentEmails.length === 0) {\n  color = 3066993; // green\n} else if (d.urgentEmails.length <= 2) {\n  color = 16776960; // yellow\n} else {\n  color = 15158332; // red\n}\n\nconst catEmoji = {\n  'Finance': '\\u{1f4b0}', 'Finance/Banking': '\\u{1f3e6}', 'Finance/Receipts': '\\u{1f9fe}',\n  'Finance/Bills': '\\u{1f4b3}', 'Finance/Investments': '\\u{1f4c8}',\n  'Work': '\\u{1f4bc}', 'Work/Projects': '\\u{1f4bc}', 'Work/Meetings': '\\u{1f4bc}',\n  'Shopping': '\\u{1f6d2}', 'Shopping/Orders': '\\u{1f6d2}', 'Shopping/Shipping': '\\u{1f4e6}',\n  'Shopping/Deals': '\\u{1f6d2}',\n  'Travel': '\\u{2708}\\u{fe0f}', 'Travel/Flights': '\\u{2708}\\u{fe0f}',\n  'Travel/Hotels': '\\u{1f3e8}', 'Travel/Reservations': '\\u{1f4c5}',\n  'Newsletters': '\\u{1f4f0}', 'Notifications': '\\u{1f514}',\n  'Social': '\\u{1f465}', 'Receipts': '\\u{1f9fe}', 'Security': '\\u{1f512}',\n  'Personal': '\\u{1f4ac}', 'Personal/Family': '\\u{1f4ac}', 'Personal/Health': '\\u{1f4ac}',\n  'Other': '\\u{1f4c2}', 'Uncategorized': '\\u{2753}'\n};\n\nconst categoryLines = d.sortedCategories\n  .map(([cat, count]) => `${catEmoji[cat] || '\\u{1f4c1}'} **${cat}**: ${count}`)\n  .join('\\n');\n\nconst urgentLines = d.urgentEmails.length > 0\n  ? d.urgentEmails.map(e => `\\u{2022} **${e.subject}**\\n  \\u{2514} _${e.senderName}_`).join('\\n')\n  : '';\n\nconst actionLines = d.actionEmails.length > 0\n  ? d.actionEmails.map(e => {\n      const actionType = e.actions.map(a => a.replace('@Action/', '')).join(', ');\n      return `\\u{2022} **${actionType}**: ${e.subject}\\n  \\u{2514} _${e.senderName}_`;\n    }).join('\\n')\n  : '';\n\nconst allEmailLines = d.allEmails.map(e => {\n  const catTag = e.cats[0] || 'Other';\n  return `\\u{2022} [${catTag}] **${e.subject}**\\n  \\u{2514} _${e.senderName}_`;\n});\n\nconst mainFields = [\n  {\n    name: `\\u{1f4ca} Total Processed`,\n    value: `**${total}** email${total !== 1 ? 's' : ''}`,\n    inline: true\n  },\n  {\n    name: `\\u{1f4c1} By Category`,\n    value: (categoryLines || '_None_').substring(0, 1024),\n    inline: false\n  }\n];\n\nif (urgentLines) {\n  mainFields.push({\n    name: `\\u{1f534} Urgent`,\n    value: urgentLines.substring(0, 1024),\n    inline: false\n  });\n}\n\nif (actionLines) {\n  mainFields.push({\n    name: `\\u{26a1} Action Needed`,\n    value: actionLines.substring(0, 1024),\n    inline: false\n  });\n}\n\nconst embeds = [{\n  title: `\\u{1f4ec} Daily Email Digest \\u{2014} ${d.dayOfWeek}, ${d.today}`,\n  color,\n  fields: mainFields\n}];\n\nconst chunks = [];\nlet currentChunk = '';\nfor (const line of allEmailLines) {\n  if (currentChunk.length + line.length + 1 > 1024) {\n    chunks.push(currentChunk);\n    currentChunk = line;\n  } else {\n    currentChunk += (currentChunk ? '\\n' : '') + line;\n  }\n}\nif (currentChunk) chunks.push(currentChunk);\n\nlet embedIdx = 0;\nfor (let i = 0; i < chunks.length; i++) {\n  const fieldName = i === 0 ? `\\u{1f4e8} All Emails (${total})` : '\\u{200b}';\n\n  if (embedIdx === 0 && embeds[0].fields.length < 25) {\n    embeds[0].fields.push({ name: fieldName, value: chunks[i], inline: false });\n  } else {\n    if (!embeds[embedIdx] || embeds[embedIdx].fields?.length >= 25) {\n      embedIdx = embeds.length;\n      if (embeds.length >= 10) break;\n      embeds.push({ color, fields: [] });\n    }\n    embeds[embedIdx].fields.push({ name: fieldName, value: chunks[i], inline: false });\n  }\n}\n\nembeds[embeds.length - 1].footer = {\n  text: 'n8n Email Classifier \\u{2022} Daily Digest'\n};\nembeds[embeds.length - 1].timestamp = new Date().toISOString();\n\nreturn { embeds };\n"
       },
       "id": "build-discord-embed",
       "name": "Build Discord Embed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2220, 300]
+      "position": [3320, 300]
     },
     {
       "parameters": {
-        "jsCode": "// No emails processed today — quiet day message\nconst dateInfo = $('Build Label Map').first().json;\n\nreturn {\n  embeds: [\n    {\n      title: `\\u{1f4ec} Daily Email Digest — ${dateInfo.dayOfWeek}, ${dateInfo.today}`,\n      description: 'No emails were processed today. Quiet day! \\u{2615}',\n      color: 3066993,\n      footer: {\n        text: 'n8n Email Classifier • Daily Digest'\n      },\n      timestamp: new Date().toISOString()\n    }\n  ]\n};\n"
+        "jsCode": "// No emails to classify today — quiet day message\nconst dateInfo = $('Build Label Map').first().json;\n\nreturn {\n  embeds: [\n    {\n      title: `\\u{1f4ec} Daily Email Digest — ${dateInfo.dayOfWeek}, ${dateInfo.today}`,\n      description: 'No unclassified emails found today. Quiet day! \\u{2615}',\n      color: 3066993,\n      footer: {\n        text: 'n8n Email Classifier • Daily Digest'\n      },\n      timestamp: new Date().toISOString()\n    }\n  ]\n};\n"
       },
       "id": "quiet-day-message",
       "name": "Quiet Day Message",
@@ -189,7 +274,7 @@
       "name": "Send to Discord",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2440, 400]
+      "position": [3540, 400]
     }
   ],
   "connections": {
@@ -241,14 +326,14 @@
       "main": [
         [
           {
-            "node": "Get Processed Emails",
+            "node": "Fetch Unclassified Emails",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Processed Emails": {
+    "Fetch Unclassified Emails": {
       "main": [
         [
           {
@@ -289,6 +374,61 @@
       ]
     },
     "Fetch Message Details": {
+      "main": [
+        [
+          {
+            "node": "Preprocess Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preprocess Email": {
+      "main": [
+        [
+          {
+            "node": "AI Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classification": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Build Labels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Labels": {
+      "main": [
+        [
+          {
+            "node": "Apply Labels & Archive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Labels & Archive": {
       "main": [
         [
           {
@@ -338,8 +478,11 @@
     "executionOrder": "v1"
   },
   "staticData": null,
-  "tags": [],
+  "tags": [
+    { "name": "email" },
+    { "name": "automation" }
+  ],
   "triggerCount": 1,
   "updatedAt": "2025-01-29T00:00:00.000Z",
-  "versionId": "1"
+  "versionId": "2"
 }
