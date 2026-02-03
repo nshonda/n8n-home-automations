@@ -1,0 +1,390 @@
+{
+  "name": "Job Digest Daily (Adzuna + Ollama Matching)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily 8 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.adzuna.com/v1/api/jobs/us/search/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "app_id", "value": "={{ $env.ADZUNA_APP_ID }}" },
+            { "name": "app_key", "value": "={{ $env.ADZUNA_API_KEY }}" },
+            { "name": "results_per_page", "value": "50" },
+            { "name": "what", "value": "software engineer" },
+            { "name": "sort_by", "value": "date" },
+            { "name": "max_days_old", "value": "3" }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-adzuna",
+      "name": "Fetch Jobs (Adzuna)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [480, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Adzuna response into standard format\nconst results = $json.results || [];\n\nreturn results.map(job => ({\n  json: {\n    id: job.id?.toString() || '',\n    title: job.title || '',\n    company: job.company?.display_name || 'Unknown',\n    location: job.location?.display_name || 'Unknown',\n    salary_min: job.salary_min || null,\n    salary_max: job.salary_max || null,\n    url: job.redirect_url || '',\n    description: job.description || '',\n    posted_date: job.created || '',\n    category: job.category?.label || ''\n  }\n}));\n"
+      },
+      "id": "normalize-jobs",
+      "name": "Normalize Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_JOB_CONFIG_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SeenJobs"
+        },
+        "options": {}
+      },
+      "id": "read-seen-jobs",
+      "name": "Read Seen Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [700, 600],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deduplicate: remove jobs already in the seen list\nconst jobs = $('Normalize Jobs').all();\nconst seenItems = $('Read Seen Jobs').all();\nconst seenIds = new Set(seenItems.map(s => s.json.job_id || s.json.id || ''));\n\nconst newJobs = jobs.filter(j => !seenIds.has(j.json.id));\n\nif (newJobs.length === 0) {\n  return [{ json: { _noNewJobs: true, message: 'No new jobs to process' } }];\n}\n\nreturn newJobs;\n"
+      },
+      "id": "deduplicate",
+      "name": "Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json._noNewJobs }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ]
+        }
+      },
+      "id": "has-new-jobs",
+      "name": "Has New Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1140, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read profile from Google Sheet and filter jobs by keyword match\nconst profileItems = $('Read Profile').all();\nconst profileRow = profileItems[0]?.json || {};\n\n// Extract skills and titles for keyword filtering\nconst skills = (profileRow.Skills || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);\nconst titles = (profileRow.Titles || '').toLowerCase().split(',').map(t => t.trim()).filter(Boolean);\nconst keywords = [...skills, ...titles];\n\nconst jobs = $('Has New Jobs?').all();\n\n// Pass through jobs that match at least 1 keyword in title or description\nconst filtered = jobs.filter(job => {\n  const text = (job.json.title + ' ' + job.json.description + ' ' + job.json.company).toLowerCase();\n  return keywords.some(kw => text.includes(kw));\n});\n\n// If no keyword matches, pass all jobs through (let embeddings decide)\nif (filtered.length === 0) {\n  return jobs;\n}\n\nreturn filtered;\n"
+      },
+      "id": "keyword-filter",
+      "name": "Keyword Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_JOB_CONFIG_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Profile"
+        },
+        "options": {}
+      },
+      "id": "read-profile",
+      "name": "Read Profile",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 160],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare job texts for batch embedding via Ollama API\nconst jobs = $input.all();\n\nconst texts = jobs.map(job => {\n  const j = job.json;\n  return `${j.title} at ${j.company}. ${j.description}`.substring(0, 2048);\n});\n\n// Store jobs data for later merge\nreturn [{\n  json: {\n    model: 'nomic-embed-text',\n    input: texts,\n    _jobs: jobs.map(j => j.json)\n  }\n}];\n"
+      },
+      "id": "prepare-batch",
+      "name": "Prepare Batch Embed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, input: $json.input }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "embed-jobs",
+      "name": "Embed Jobs (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1800, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute cosine similarity between resume embedding and each job embedding\n// Ollama returns L2-normalized vectors, so cosine similarity = dot product\n\nfunction dotProduct(vecA, vecB) {\n  let sum = 0;\n  for (let i = 0; i < vecA.length; i++) {\n    sum += vecA[i] * vecB[i];\n  }\n  return sum;\n}\n\n// Get resume embedding from profile sheet\nconst profileItems = $('Read Profile').all();\nconst profileRow = profileItems[0]?.json || {};\nconst resumeEmbedding = JSON.parse(profileRow.Embedding || '[]');\n\nif (resumeEmbedding.length === 0) {\n  throw new Error('No resume embedding found. Run the Job Digest Setup workflow first.');\n}\n\n// Get job embeddings from Ollama response\nconst embeddings = $json.embeddings || [];\nconst jobs = $('Prepare Batch Embed').first().json._jobs || [];\n\nif (embeddings.length !== jobs.length) {\n  throw new Error(`Embedding count (${embeddings.length}) does not match job count (${jobs.length})`);\n}\n\n// Compute similarity for each job\nconst scored = jobs.map((job, i) => {\n  const similarity = dotProduct(resumeEmbedding, embeddings[i]);\n  return {\n    json: {\n      ...job,\n      similarity_score: similarity,\n      similarity_percent: (similarity * 100).toFixed(1) + '%'\n    }\n  };\n});\n\n// Sort by score descending, filter >= 0.65, take top 15\nscored.sort((a, b) => b.json.similarity_score - a.json.similarity_score);\nconst topMatches = scored.filter(j => j.json.similarity_score >= 0.65).slice(0, 15);\n\nif (topMatches.length === 0) {\n  return [{ json: { _noMatches: true, totalScored: scored.length, topScore: scored[0]?.json.similarity_score || 0 } }];\n}\n\nreturn topMatches;\n"
+      },
+      "id": "rank-and-filter",
+      "name": "Rank & Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json._noMatches }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ]
+        }
+      },
+      "id": "has-matches",
+      "name": "Any Matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Discord webhook payload with color-coded embeds\nconst jobs = $input.all();\nconst date = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });\n\nfunction getColor(score) {\n  if (score >= 0.80) return 5763719;  // Green\n  if (score >= 0.70) return 3447003;  // Blue\n  return 16705372;                     // Yellow\n}\n\nfunction formatSalary(min, max) {\n  if (!min && !max) return 'Not specified';\n  const fmt = (n) => '$' + Math.round(n).toLocaleString();\n  if (min && max) return `${fmt(min)} - ${fmt(max)}`;\n  if (min) return `${fmt(min)}+`;\n  return `Up to ${fmt(max)}`;\n}\n\nconst embeds = jobs.slice(0, 10).map((item, i) => {\n  const j = item.json;\n  return {\n    title: `${i + 1}. ${j.title}`,\n    url: j.url,\n    color: getColor(j.similarity_score),\n    fields: [\n      { name: 'Company', value: j.company, inline: true },\n      { name: 'Location', value: j.location, inline: true },\n      { name: 'Match', value: j.similarity_percent, inline: true },\n      { name: 'Salary', value: formatSalary(j.salary_min, j.salary_max), inline: true },\n      { name: 'Posted', value: j.posted_date ? new Date(j.posted_date).toLocaleDateString() : 'Recent', inline: true }\n    ]\n  };\n});\n\nreturn [{\n  json: {\n    content: `**Daily Job Digest** - ${date} (${jobs.length} matches)`,\n    embeds: embeds\n  }\n}];\n"
+      },
+      "id": "format-discord",
+      "name": "Format Discord Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.JOB_SEARCH_DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2680, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No matches today - optional notification\nconst data = $input.first().json;\nreturn [{\n  json: {\n    content: `**Job Digest** - No strong matches today (${data.totalScored || 0} jobs scored, top score: ${((data.topScore || 0) * 100).toFixed(1)}%)`\n  }\n}];\n"
+      },
+      "id": "no-matches-msg",
+      "name": "No Matches Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.JOB_SEARCH_DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-no-matches-discord",
+      "name": "Send No-Match Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2680, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect ALL fetched job IDs (not just matches) to prevent re-processing\nconst normalizedJobs = $('Normalize Jobs').all();\nconst now = new Date().toISOString();\n\nreturn normalizedJobs.map(job => ({\n  json: {\n    job_id: job.json.id,\n    title: job.json.title,\n    seen_date: now\n  }\n}));\n"
+      },
+      "id": "prepare-seen",
+      "name": "Prepare Seen Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 640]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_JOB_CONFIG_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SeenJobs"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "append-seen-jobs",
+      "name": "Append Seen Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2680, 640],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// No new jobs to process\nreturn [{ json: { message: 'No new jobs found. All fetched jobs were already seen.' } }];\n"
+      },
+      "id": "no-new-jobs",
+      "name": "No New Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 520]
+    }
+  ],
+  "connections": {
+    "Daily 8 AM": {
+      "main": [[ { "node": "Fetch Jobs (Adzuna)", "type": "main", "index": 0 } ]]
+    },
+    "Manual Trigger": {
+      "main": [[ { "node": "Fetch Jobs (Adzuna)", "type": "main", "index": 0 } ]]
+    },
+    "Fetch Jobs (Adzuna)": {
+      "main": [[
+        { "node": "Normalize Jobs", "type": "main", "index": 0 },
+        { "node": "Read Seen Jobs", "type": "main", "index": 0 },
+        { "node": "Read Profile", "type": "main", "index": 0 }
+      ]]
+    },
+    "Normalize Jobs": {
+      "main": [[ { "node": "Deduplicate", "type": "main", "index": 0 } ]]
+    },
+    "Read Seen Jobs": {
+      "main": [[ { "node": "Deduplicate", "type": "main", "index": 0 } ]]
+    },
+    "Deduplicate": {
+      "main": [[ { "node": "Has New Jobs?", "type": "main", "index": 0 } ]]
+    },
+    "Has New Jobs?": {
+      "main": [
+        [ { "node": "Keyword Filter", "type": "main", "index": 0 } ],
+        [ { "node": "No New Jobs", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Keyword Filter": {
+      "main": [[ { "node": "Prepare Batch Embed", "type": "main", "index": 0 } ]]
+    },
+    "Prepare Batch Embed": {
+      "main": [[ { "node": "Embed Jobs (Ollama)", "type": "main", "index": 0 } ]]
+    },
+    "Embed Jobs (Ollama)": {
+      "main": [[ { "node": "Rank & Filter", "type": "main", "index": 0 } ]]
+    },
+    "Rank & Filter": {
+      "main": [[ { "node": "Any Matches?", "type": "main", "index": 0 } ]]
+    },
+    "Any Matches?": {
+      "main": [
+        [
+          { "node": "Format Discord Message", "type": "main", "index": 0 },
+          { "node": "Prepare Seen Jobs", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "No Matches Message", "type": "main", "index": 0 },
+          { "node": "Prepare Seen Jobs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Format Discord Message": {
+      "main": [[ { "node": "Send to Discord", "type": "main", "index": 0 } ]]
+    },
+    "No Matches Message": {
+      "main": [[ { "node": "Send No-Match Notice", "type": "main", "index": 0 } ]]
+    },
+    "Prepare Seen Jobs": {
+      "main": [[ { "node": "Append Seen Jobs", "type": "main", "index": 0 } ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "job-digest" }, { "name": "daily" }],
+  "triggerCount": 2,
+  "pinData": {}
+}

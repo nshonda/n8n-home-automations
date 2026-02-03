@@ -1,0 +1,241 @@
+{
+  "name": "Job Digest Setup (One-Time Profile Builder)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.GOOGLE_DRIVE_RESUME_FILE_ID }}"
+        },
+        "options": {}
+      },
+      "id": "download-resume",
+      "name": "Download Resume PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [460, 200],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "options": {}
+      },
+      "id": "extract-pdf-text",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_LINKEDIN_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Skills"
+        },
+        "options": {}
+      },
+      "id": "read-linkedin-skills",
+      "name": "Read LinkedIn Skills",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 440],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_LINKEDIN_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Positions"
+        },
+        "options": {}
+      },
+      "id": "read-linkedin-positions",
+      "name": "Read LinkedIn Positions",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 620],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {},
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "merge-data",
+      "name": "Merge All Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine resume text + LinkedIn data into a single profile string\nconst items = $input.all();\nconst item = items[0].json;\n\n// Resume text from PDF extraction\nconst resumeText = $('Extract PDF Text').first().json.data || $('Extract PDF Text').first().json.text || '';\n\n// LinkedIn skills\nconst skillsItems = $('Read LinkedIn Skills').all();\nconst skills = skillsItems.map(s => s.json['Skill Name'] || s.json.skill || s.json.Skills || '').filter(Boolean);\n\n// LinkedIn positions\nconst positionsItems = $('Read LinkedIn Positions').all();\nconst positions = positionsItems.map(p => {\n  const title = p.json['Title'] || p.json.title || '';\n  const company = p.json['Company Name'] || p.json.company || '';\n  const desc = p.json['Description'] || p.json.description || '';\n  return `${title} at ${company}. ${desc}`;\n}).filter(Boolean);\n\n// Build the full profile text for embedding\nconst profileText = [\n  'RESUME:',\n  resumeText,\n  '',\n  'SKILLS:',\n  skills.join(', '),\n  '',\n  'EXPERIENCE:',\n  positions.join('\\n')\n].join('\\n');\n\n// Extract key metadata\nconst skillsList = skills.join(', ');\nconst titlesList = positionsItems\n  .map(p => p.json['Title'] || p.json.title || '')\n  .filter(Boolean)\n  .filter((v, i, a) => a.indexOf(v) === i)\n  .join(', ');\n\nreturn [{\n  json: {\n    profileText,\n    skills: skillsList,\n    titles: titlesList,\n    resumeTextLength: resumeText.length,\n    skillCount: skills.length,\n    positionCount: positions.length\n  }\n}];\n"
+      },
+      "id": "build-profile",
+      "name": "Build Profile Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'nomic-embed-text', input: $json.profileText.substring(0, 8192) }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "embed-profile",
+      "name": "Embed Profile (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const embedding = $json.embeddings[0];\nconst profile = $('Build Profile Text').first().json;\n\nreturn [{\n  json: {\n    embedding: JSON.stringify(embedding),\n    skills: profile.skills,\n    titles: profile.titles,\n    embeddingDimensions: embedding.length,\n    generatedAt: new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "format-for-storage",
+      "name": "Format for Storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_JOB_CONFIG_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Profile"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Row": "1",
+            "Embedding": "={{ $json.embedding }}",
+            "Skills": "={{ $json.skills }}",
+            "Titles": "={{ $json.titles }}",
+            "Dimensions": "={{ $json.embeddingDimensions }}",
+            "Generated At": "={{ $json.generatedAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "store-profile",
+      "name": "Store Profile in Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1780, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PASTE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Build Profile Text').first().json;\nconst embedding = $('Format for Storage').first().json;\n\nreturn [{\n  json: {\n    message: 'Profile setup complete!',\n    resumeTextLength: profile.resumeTextLength,\n    skillCount: profile.skillCount,\n    positionCount: profile.positionCount,\n    embeddingDimensions: embedding.embeddingDimensions,\n    generatedAt: embedding.generatedAt\n  }\n}];\n"
+      },
+      "id": "summary",
+      "name": "Setup Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Download Resume PDF", "type": "main", "index": 0 },
+          { "node": "Read LinkedIn Skills", "type": "main", "index": 0 },
+          { "node": "Read LinkedIn Positions", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Download Resume PDF": {
+      "main": [[ { "node": "Extract PDF Text", "type": "main", "index": 0 } ]]
+    },
+    "Extract PDF Text": {
+      "main": [[ { "node": "Merge All Data", "type": "main", "index": 0 } ]]
+    },
+    "Read LinkedIn Skills": {
+      "main": [[ { "node": "Merge All Data", "type": "main", "index": 0 } ]]
+    },
+    "Read LinkedIn Positions": {
+      "main": [[ { "node": "Merge All Data", "type": "main", "index": 0 } ]]
+    },
+    "Merge All Data": {
+      "main": [[ { "node": "Build Profile Text", "type": "main", "index": 0 } ]]
+    },
+    "Build Profile Text": {
+      "main": [[ { "node": "Embed Profile (Ollama)", "type": "main", "index": 0 } ]]
+    },
+    "Embed Profile (Ollama)": {
+      "main": [[ { "node": "Format for Storage", "type": "main", "index": 0 } ]]
+    },
+    "Format for Storage": {
+      "main": [[ { "node": "Store Profile in Google Sheet", "type": "main", "index": 0 } ]]
+    },
+    "Store Profile in Google Sheet": {
+      "main": [[ { "node": "Setup Summary", "type": "main", "index": 0 } ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "job-digest" }, { "name": "setup" }],
+  "triggerCount": 1,
+  "pinData": {}
+}

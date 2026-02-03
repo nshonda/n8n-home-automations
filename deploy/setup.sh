@@ -54,8 +54,35 @@ if ! docker compose version &> /dev/null; then
     exit 1
 fi
 
-echo "Starting n8n..."
+echo "Starting services..."
 docker compose up -d
+
+echo ""
+echo "Waiting for Ollama to become healthy..."
+OLLAMA_RETRIES=0
+OLLAMA_MAX_RETRIES=20
+while [ $OLLAMA_RETRIES -lt $OLLAMA_MAX_RETRIES ]; do
+    if docker inspect --format='{{.State.Health.Status}}' ollama 2>/dev/null | grep -q "healthy"; then
+        echo "Ollama is healthy."
+        break
+    fi
+    OLLAMA_RETRIES=$((OLLAMA_RETRIES + 1))
+    echo "  Waiting for Ollama... ($OLLAMA_RETRIES/$OLLAMA_MAX_RETRIES)"
+    sleep 5
+done
+
+if [ $OLLAMA_RETRIES -eq $OLLAMA_MAX_RETRIES ]; then
+    echo "WARNING: Ollama did not become healthy within expected time."
+    echo "Check logs with: docker compose logs ollama"
+else
+    echo "Waiting for model pull (ollama-init)..."
+    docker compose logs -f ollama-init 2>/dev/null | while read -r line; do
+        echo "  $line"
+        echo "$line" | grep -q "pulling\|success\|already exists" && continue
+    done
+    echo "Verifying models..."
+    docker exec ollama ollama list 2>/dev/null || echo "  Could not list models. Check: docker exec ollama ollama list"
+fi
 
 echo ""
 echo "=== Setup Complete ==="

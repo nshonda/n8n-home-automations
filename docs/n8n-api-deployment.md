@@ -33,14 +33,43 @@ for node in wf.get('nodes', []):
 
 Never commit real credential IDs to git.
 
-## Importing a New Workflow
+## Importing Workflows
+
+### Automated (recommended)
+
+Use the import script to deploy workflows over SSH. It auto-detects whether to create or update, and strips the JSON to only API-accepted fields.
+
+```bash
+# Import all workflows
+./scripts/import-workflows.sh
+
+# Import specific workflows
+./scripts/import-workflows.sh workflows/job-digest-setup.json workflows/job-digest-daily.json
+```
+
+After importing, fix credential placeholders in the n8n UI or via the API (see below).
+
+### Manual
+
+The n8n REST API rejects extra fields in the request body (`staticData`, `tags`, `triggerCount`, `pinData`). You must strip the payload to only `name`, `nodes`, `connections`, and `settings`:
 
 ```bash
 API_KEY=$(cat ~/.n8n-api-key)
-curl -s -X POST "http://localhost:5678/api/v1/workflows" \
+python3 -c "
+import json
+with open('workflows/my-workflow.json') as f:
+    wf = json.load(f)
+payload = json.dumps({
+    'name': wf['name'],
+    'nodes': wf['nodes'],
+    'connections': wf['connections'],
+    'settings': wf.get('settings', {})
+})
+print(payload)
+" | curl -s -X POST "http://localhost:5678/api/v1/workflows" \
   -H "X-N8N-API-KEY: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d @workflows/my-workflow.json
+  -d @-
 ```
 
 The response includes the new workflow's `id` — save it for future updates. After importing, fix the credential placeholders (see below).

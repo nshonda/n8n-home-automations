@@ -87,13 +87,20 @@ Quick version:
 
 ## Step 4: Import Workflow (5 min)
 
+**Option A: Via SSH script** (recommended after API key is set up)
+```bash
+./scripts/import-workflows.sh workflows/email-classifier.json
+```
+
+**Option B: Via n8n UI**
 1. Open n8n at `https://n8n.yourdomain.com`
 2. Go to **Workflows** > **Import from File**
 3. Select `workflows/email-classifier.json`
-4. Update credential references:
-   - Click Gmail nodes → Select your Gmail credential
-   - Click AI Classification node → Select your Anthropic credential
-5. **Activate** the workflow
+
+Then update credential references:
+- Click Gmail nodes → Select your Gmail credential
+- Click AI Classification node → Select your Anthropic credential
+- **Activate** the workflow
 
 ## Step 5: Create Gmail Labels (5 min)
 

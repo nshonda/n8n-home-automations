@@ -15,6 +15,20 @@ Future workflow ideas for automating day-to-day life, organized by build priorit
 
 ---
 
+## Active — Job Search Digest (P0)
+
+**Status**: Implemented — requires configuration
+
+AI-powered daily job digest using Ollama embeddings for semantic matching against your resume.
+
+- **Setup workflow** (`job-digest-setup.json`): One-time profile builder — downloads resume from Google Drive, parses LinkedIn export, generates embedding via Ollama (nomic-embed-text), stores in Google Sheet
+- **Daily workflow** (`job-digest-daily.json`): Fetches jobs from Adzuna API → deduplicates against seen jobs → keyword pre-filter → batch embed via Ollama → cosine similarity ranking → color-coded Discord digest (top 15 matches)
+- **Infrastructure**: Ollama service added to Docker Compose with GPU support, auto-pulls nomic-embed-text and qwen2.5:3b models
+- **New integrations**: Adzuna API (free), Ollama (local), Google Sheets (profile + dedup storage)
+- **See**: `docs/job-digest-setup.md` for full setup instructions
+
+---
+
 ## Wave 1 — Quick Wins (P0)
 
 No new integrations needed. Build with what already exists.
