@@ -132,7 +132,14 @@
         "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}?format=full",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "gmailOAuth2",
-        "options": {}
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
       },
       "id": "fetch-message-details",
       "name": "Fetch Message Details",
@@ -224,7 +231,14 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"addLabelIds\": {{ JSON.stringify($json.labelsToAdd) }},\n  \"removeLabelIds\": [\"INBOX\"]\n}",
-        "options": {}
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
       },
       "id": "apply-labels-archive",
       "name": "Apply Labels & Archive",
