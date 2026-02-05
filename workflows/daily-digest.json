@@ -174,7 +174,14 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an email classification system. You understand emails in English and Brazilian Portuguese equally well.\\n\\nAnalyze this email and return ONLY valid JSON.\\n\\nCategories (use the most specific sub-category when applicable):\\n- Finance, Finance/Banking, Finance/Receipts, Finance/Bills, Finance/Investments\\n- Work, Work/Projects, Work/Meetings\\n- Personal, Personal/Family, Personal/Health\\n- Shopping, Shopping/Orders, Shopping/Shipping, Shopping/Deals\\n- Travel, Travel/Flights, Travel/Hotels, Travel/Reservations\\n- Notifications, Newsletters, Social, Security, Other\\n\\nPriority Levels:\\n- P1 (Urgent): Response needed within 24h, important contacts, deadlines\\n- P2 (Important): Action needed but not urgent\\n- P3 (Low): Informational, automated, promotional\\n\\nEmail:\\nFrom: {{ $json.senderEmail }}\\nSubject: {{ $json.subject }}\\nBody: {{ $json.bodyPreview.substring(0, 1000) }}\\n\\nReturn JSON:\\n{\\n  \\\"category\\\": \\\"<category>\\\",\\n  \\\"priority\\\": \\\"P1|P2|P3\\\",\\n  \\\"action_needed\\\": true|false,\\n  \\\"archive\\\": true|false,\\n  \\\"confidence\\\": 0.0-1.0,\\n  \\\"summary\\\": \\\"<one sentence in English>\\\"\\n}\\n\\nRules:\\n- Marketing/promotional with fake urgency (Last chance!, So hoje!, Ultima chance!, Aproveite!) = Newsletters, P3, archive=true, confidence>=0.90\\n- Emails from noreply@ or no-reply@ = usually P3, archive=true\\n- Emails with Unsubscribe or Cancelar inscricao = Newsletters, P3, archive=true\\n- CC'd (not To'd) = usually P3\\n- Security alerts (password reset, login attempt) = Security, P1\\n- Receipts/confirmations with no action = Finance/Receipts, P3, archive=true\\n- Bank/financial alerts = Finance/Banking, P2\\n- Order confirmations = Shopping/Orders, P3, archive=true\\n- Shipping/tracking updates = Shopping/Shipping, P3, archive=true\\n- Flight confirmations/boarding passes = Travel/Flights, P3\\n- Hotel confirmations = Travel/Hotels, P3\\n- Other travel bookings (car, tours, restaurant) = Travel/Reservations, P3\\n- Be confident: if clearly promotional or automated, set confidence >= 0.90\\n- Always return valid JSON, nothing else\"\n    }\n  ]\n}",
-        "options": {}
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 2000
+            }
+          }
+        }
       },
       "id": "ai-classify",
       "name": "AI Classification",
@@ -264,7 +271,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://discord.com/api/webhooks/PASTE_YOUR_WEBHOOK_URL_HERE",
+        "url": "DISCORD_WEBHOOK_URL",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
