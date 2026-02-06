@@ -156,7 +156,10 @@
           "id": "PASTE_CREDENTIAL_ID",
           "name": "Google Sheets OAuth2"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 30000
     },
     {
       "parameters": {
@@ -329,8 +332,7 @@
     "Fetch Jobs (Adzuna)": {
       "main": [[
         { "node": "Normalize Jobs", "type": "main", "index": 0 },
-        { "node": "Read Seen Jobs", "type": "main", "index": 0 },
-        { "node": "Read Profile", "type": "main", "index": 0 }
+        { "node": "Read Seen Jobs", "type": "main", "index": 0 }
       ]]
     },
     "Normalize Jobs": {
@@ -344,7 +346,10 @@
     },
     "Has New Jobs?": {
       "main": [
-        [ { "node": "Keyword Filter", "type": "main", "index": 0 } ],
+        [
+          { "node": "Read Profile", "type": "main", "index": 0 },
+          { "node": "Keyword Filter", "type": "main", "index": 0 }
+        ],
         [ { "node": "No New Jobs", "type": "main", "index": 0 } ]
       ]
     },
