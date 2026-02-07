@@ -135,7 +135,7 @@
         "options": {
           "batching": {
             "batch": {
-              "batchSize": 5,
+              "batchSize": 2,
               "batchInterval": 1000
             }
           }
@@ -234,8 +234,8 @@
         "options": {
           "batching": {
             "batch": {
-              "batchSize": 5,
-              "batchInterval": 1000
+              "batchSize": 1,
+              "batchInterval": 1500
             }
           }
         }
