@@ -42,14 +42,17 @@
           ]
         },
         "options": {
-          "timeout": 15000
+          "timeout": 30000
         }
       },
       "id": "fetch-adzuna",
       "name": "Fetch Jobs (Adzuna)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [480, 400]
+      "position": [480, 400],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
     },
     {
       "parameters": {
