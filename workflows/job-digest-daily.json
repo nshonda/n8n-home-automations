@@ -56,7 +56,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normalize Adzuna response into standard format\nconst results = $json.results || [];\n\nreturn results.map(job => ({\n  json: {\n    id: job.id?.toString() || '',\n    title: job.title || '',\n    company: job.company?.display_name || 'Unknown',\n    location: job.location?.display_name || 'Unknown',\n    salary_min: job.salary_min || null,\n    salary_max: job.salary_max || null,\n    url: job.redirect_url || '',\n    description: job.description || '',\n    posted_date: job.created || '',\n    category: job.category?.label || ''\n  }\n}));\n"
+        "jsCode": "// Normalize Adzuna response into standard format\nconst results = $('Fetch Jobs (Adzuna)').first().json.results || [];\n\nreturn results.map(job => ({\n  json: {\n    id: job.id?.toString() || '',\n    title: job.title || '',\n    company: job.company?.display_name || 'Unknown',\n    location: job.location?.display_name || 'Unknown',\n    salary_min: job.salary_min || null,\n    salary_max: job.salary_max || null,\n    url: job.redirect_url || '',\n    description: job.description || '',\n    posted_date: job.created || '',\n    category: job.category?.label || ''\n  }\n}));\n"
       },
       "id": "normalize-jobs",
       "name": "Normalize Jobs",
@@ -340,18 +340,21 @@
   ],
   "connections": {
     "Daily 8 AM": {
-      "main": [[ { "node": "Fetch Jobs (Adzuna)", "type": "main", "index": 0 } ]]
+      "main": [[ { "node": "Read Profile", "type": "main", "index": 0 } ]]
     },
     "Manual Trigger": {
+      "main": [[ { "node": "Read Profile", "type": "main", "index": 0 } ]]
+    },
+    "Read Profile": {
       "main": [[ { "node": "Fetch Jobs (Adzuna)", "type": "main", "index": 0 } ]]
     },
     "Fetch Jobs (Adzuna)": {
-      "main": [[ { "node": "Normalize Jobs", "type": "main", "index": 0 } ]]
-    },
-    "Normalize Jobs": {
       "main": [[ { "node": "Read Seen Jobs", "type": "main", "index": 0 } ]]
     },
     "Read Seen Jobs": {
+      "main": [[ { "node": "Normalize Jobs", "type": "main", "index": 0 } ]]
+    },
+    "Normalize Jobs": {
       "main": [[ { "node": "Deduplicate", "type": "main", "index": 0 } ]]
     },
     "Deduplicate": {
@@ -360,7 +363,6 @@
     "Has New Jobs?": {
       "main": [
         [
-          { "node": "Read Profile", "type": "main", "index": 0 },
           { "node": "Keyword Filter", "type": "main", "index": 0 }
         ],
         [ { "node": "No New Jobs", "type": "main", "index": 0 } ]
