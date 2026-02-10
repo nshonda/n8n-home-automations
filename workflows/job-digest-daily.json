@@ -75,7 +75,7 @@
         "sheetName": {
           "__rl": true,
           "mode": "list",
-          "value": "SeenJobs"
+          "value": 857103863
         },
         "options": {}
       },
@@ -84,6 +84,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [700, 600],
+      "alwaysOutputData": true,
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "PASTE_CREDENTIAL_ID",
@@ -104,19 +105,25 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": false },
-          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
+              "id": "has-new-jobs-cond",
               "leftValue": "={{ $json._noNewJobs }}",
-              "rightValue": true,
+              "rightValue": "",
               "operator": {
                 "type": "boolean",
-                "operation": "notTrue"
+                "operation": "false"
               }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "has-new-jobs",
       "name": "Has New Jobs?",
@@ -145,7 +152,7 @@
         "sheetName": {
           "__rl": true,
           "mode": "list",
-          "value": "Profile"
+          "value": 0
         },
         "options": {}
       },
@@ -204,19 +211,25 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": false },
-          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
+              "id": "has-matches-cond",
               "leftValue": "={{ $json._noMatches }}",
-              "rightValue": true,
+              "rightValue": "",
               "operator": {
                 "type": "boolean",
-                "operation": "notTrue"
+                "operation": "false"
               }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "has-matches",
       "name": "Any Matches?",
@@ -295,7 +308,7 @@
         "sheetName": {
           "__rl": true,
           "mode": "list",
-          "value": "SeenJobs"
+          "value": 857103863
         },
         "columns": {
           "mappingMode": "autoMapInputData"
@@ -333,13 +346,10 @@
       "main": [[ { "node": "Fetch Jobs (Adzuna)", "type": "main", "index": 0 } ]]
     },
     "Fetch Jobs (Adzuna)": {
-      "main": [[
-        { "node": "Normalize Jobs", "type": "main", "index": 0 },
-        { "node": "Read Seen Jobs", "type": "main", "index": 0 }
-      ]]
+      "main": [[ { "node": "Normalize Jobs", "type": "main", "index": 0 } ]]
     },
     "Normalize Jobs": {
-      "main": [[ { "node": "Deduplicate", "type": "main", "index": 0 } ]]
+      "main": [[ { "node": "Read Seen Jobs", "type": "main", "index": 0 } ]]
     },
     "Read Seen Jobs": {
       "main": [[ { "node": "Deduplicate", "type": "main", "index": 0 } ]]
